@@ -9,6 +9,8 @@ add_executable(k_car
     Core/Src/main.c
     Core/Src/app.c
     Core/Src/app_modules.c
+    Core/Src/ultrasonic.c
+    Core/Src/ultrasonic_stm32.c
     Core/Src/newlib_io.c
     Core/Src/stm32f1xx_it.c
     Core/Src/system_stm32f1xx.c

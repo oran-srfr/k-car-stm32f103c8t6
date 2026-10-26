@@ -1,4 +1,6 @@
 #include "app_modules.h"
+#include "ultrasonic.h"
+#include "stm32f1xx_hal.h"
 
 static void HMI_Poll(AppInputs *inputs)
 {
@@ -12,8 +14,11 @@ static void Vision_Poll(AppInputs *inputs)
 
 static void Sonar_Poll(uint32_t now_ms, AppInputs *inputs)
 {
-    (void)now_ms;
-    (void)inputs; /* TODO: valid distance and acquisition timestamp, no busy wait. */
+    Ulr_Task(now_ms);
+    UlrReading sample = Ulr_GetReading();
+    inputs->sonar_valid = sample.status == ULR_OK || sample.status == ULR_TOO_CLOSE;
+    inputs->distance_mm = sample.status == ULR_TOO_CLOSE ? 0U : sample.distance_mm;
+    inputs->sonar_sample_ms = sample.sample_ms;
 }
 
 static void Tracking_Poll(AppInputs *inputs)
@@ -28,7 +33,8 @@ static void Parking_Poll(AppInputs *inputs)
 
 void Modules_Init(void)
 {
-    /* TODO: motor safe-stop, line sensors, encoders, UARTs, sonar, buzzer, HMI.
+    (void)Ulr_Init(HAL_GetTick());
+    /* TODO: motor safe-stop, line sensors, encoders, UARTs, buzzer, HMI.
      * Keep motors stopped until all required inputs have been validated. */
 }
 
@@ -40,7 +46,7 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
      * TODO line/attitude: line validity and qualified A/B/C/D waypoint events.
      * TODO vision: parse K230 UART in foreground, validate and deduplicate frames;
      * publish parking_space_event for the selected mode.
-     * TODO sonar: distance_mm + actual sample timestamp; timeout => invalid.
+     * Sonar publishes actual sample timestamps; failure => invalid.
      * TODO parking: nonblocking maneuver progress, DONE only after verified stop.
      * Interrupt handlers should only capture edges/bytes, never block here. */
     *inputs = (AppInputs){ .park_result = APP_PARK_BUSY };

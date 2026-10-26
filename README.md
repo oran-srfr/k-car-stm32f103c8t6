@@ -10,7 +10,7 @@
 - 调试/烧录：ST-Link，SWD，SWDIO=PA13，SWCLK=PA14。
 - 固件环境：STM32CubeF1 HAL/CMSIS、GNU Arm GCC、CMake、Ninja。
 - IDE：VS Code，STM32 官方扩展；工作区文件为 `k-car.code-workspace`。
-- 固件状态：已加入比赛状态机与模块占位接口，尚未实现实际驱动；最新流程和接线见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)。
+- 固件状态：已加入比赛状态机与 HC-SR04 非阻塞测距驱动，其余模块仍为占位接口；最新流程和接线见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，测距说明见 [firmware/ULTRASONIC.md](firmware/ULTRASONIC.md)。
 - 非固件资料：采购清单在 `output/pdf/`，生成脚本为 `build_k_bom_pdf.py`，图片与中间产物在 `_k_figs/`、`tmp/`。
 
 目标芯片配置已经落实在工程中：

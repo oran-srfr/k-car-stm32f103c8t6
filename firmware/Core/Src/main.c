@@ -1,7 +1,7 @@
 #include "main.h"
 #include "app.h"
 
-/* Watch these variables in the debugger. No board-specific GPIO is driven. */
+/* Watch these variables in the debugger. Motor outputs remain unconfigured. */
 volatile uint32_t heartbeat_count = 0U;
 volatile uint32_t uptime_ms = 0U;
 volatile uint32_t system_clock_hz = 0U;

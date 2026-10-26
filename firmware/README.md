@@ -32,7 +32,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 或其他外设。`heartbeat_count` 每约一秒递增；`uptime_ms` 记录系统毫秒数；
 `system_clock_hz` 应为 8000000；`error_code` 正常为 0。
 
-这是开发环境验证工程，尚未实现循迹、避障和泊车。确认板卡原理图、晶振和接线后，
+已加入比赛任务状态机与模块占位接口，详见 [FRAMEWORK.md](FRAMEWORK.md)。
+默认等待发车，尚未实现实际循迹、测距和泊车驱动。确认板卡原理图、晶振和接线后，
 再配置 GPIO、PWM、编码器、传感器和串口。保留 PA13/PA14 的 SWD 调试功能。
 
 工程使用 `STM32F103xB` 器件宏、`startup_stm32f103xb.s` 和

@@ -1,0 +1,168 @@
+#include "app.h"
+#include "app_modules.h"
+#include <assert.h>
+#include <stdio.h>
+
+static AppInputs input;
+static AppDrive drive;
+static unsigned sounds[4];
+static unsigned display_count;
+
+void Modules_Init(void) {}
+void Modules_Poll(uint32_t now, AppInputs *out) { (void)now; *out = input; }
+void Modules_Drive(AppDrive command) { drive = command; }
+void Modules_Sound(AppSound event) { ++sounds[event]; }
+void Modules_Display(const AppStatus *s) { (void)s; ++display_count; }
+
+static void step(uint32_t now)
+{
+    input.sonar_sample_ms = now;
+    App_Task(now);
+    input.start_pressed = input.stop_pressed = false;
+    input.point_event = APP_POINT_NONE;
+    input.parking_space_event = input.left_line_event = false;
+}
+
+static void begin(AppMode mode, uint32_t now)
+{
+    input = (AppInputs){ .line_valid = true, .sonar_valid = true,
+                        .distance_mm = 500, .start_pressed = true, .selected_mode = mode };
+    for (unsigned i = 0; i < 4; ++i) { sounds[i] = 0; }
+    App_Init(now);
+    assert(drive == APP_DRIVE_STOP);
+    step(now);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE);
+}
+
+static void waypoint(AppPoint point, uint32_t now)
+{
+    input.point_event = point;
+    step(now);
+}
+
+static void test_laps(void)
+{
+    begin(APP_MODE_LAPS, 0);
+    waypoint(APP_POINT_A, 10); /* Start-area duplicate cannot count a lap. */
+    waypoint(APP_POINT_D, 20); /* Missing B/C also cannot count a lap. */
+    waypoint(APP_POINT_A, 30);
+    assert(App_GetStatus().laps == 0);
+    for (unsigned lap = 0; lap < 2; ++lap) {
+        uint32_t base = lap * 1000;
+        waypoint(APP_POINT_B, base + 100);
+        waypoint(APP_POINT_C, base + 200);
+        waypoint(APP_POINT_D, base + 300);
+        waypoint(APP_POINT_A, base + 1000);
+    }
+    AppStatus s = App_GetStatus();
+    assert(s.laps == 2 && s.lap_ms[0] == 1000 && s.lap_ms[1] == 1000);
+    assert(s.state == APP_FINISHED && drive == APP_DRIVE_STOP);
+    assert(sounds[APP_SOUND_B] == 2 && sounds[APP_SOUND_C] == 2);
+    waypoint(APP_POINT_A, 3000);
+    assert(App_GetStatus().laps == 2);
+}
+
+static void test_obstacle(void)
+{
+    begin(APP_MODE_LAPS, 0);
+    input.distance_mm = 80;
+    step(10);
+    assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
+    step(20);
+    input.distance_mm = 90;
+    step(30);
+    assert(App_GetStatus().obstacles == 1 && sounds[APP_SOUND_OBSTACLE] == 1);
+    assert(drive == APP_DRIVE_STOP);
+    input.sonar_valid = false;
+    step(40);
+    assert(drive == APP_DRIVE_STOP);
+    input.sonar_valid = true;
+    input.distance_mm = 101;
+    step(50);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+    input.distance_mm = 70;
+    step(60);
+    assert(App_GetStatus().obstacles == 2);
+}
+
+static void test_invalid_and_stop(void)
+{
+    App_Init(0);
+    input = (AppInputs){ .start_pressed = true };
+    step(0);
+    assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+    begin(APP_MODE_LAPS, 0);
+    /* A valid flag cannot make an old range measurement safe. */
+    App_Task(201);
+    assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
+    step(202);
+    input.line_valid = false;
+    step(203);
+    assert(App_GetStatus().state == APP_FAULT && drive == APP_DRIVE_STOP);
+    input.stop_pressed = input.start_pressed = true;
+    step(204);
+    assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+}
+
+static void park_start(AppMode mode)
+{
+    begin(mode, 0);
+    input.parking_space_event = true;
+    step(10);
+    assert(App_GetStatus().state == APP_PARKING);
+    assert(drive == (mode == APP_MODE_SIDE_PARK ? APP_DRIVE_SIDE : APP_DRIVE_REVERSE));
+}
+
+static void test_parking(void)
+{
+    for (AppMode mode = APP_MODE_SIDE_PARK; mode <= APP_MODE_REVERSE_PARK; ++mode) {
+        park_start(mode);
+        input.parking_space_event = true;
+        input.left_line_event = true;
+        step(20);
+        input.left_line_event = true;
+        step(30);
+        assert(sounds[APP_SOUND_LEAVE_LINE] == 1);
+        AppStatus s = App_GetStatus();
+        assert(s.side_spaces + s.reverse_spaces == 1);
+        input.park_result = APP_PARK_DONE;
+        step(40);
+        assert(App_GetStatus().state == APP_FINISHED && drive == APP_DRIVE_STOP);
+    }
+    park_start(APP_MODE_SIDE_PARK);
+    step(30010);
+    assert(App_GetStatus().error == APP_ERROR_PARK_TIMEOUT && drive == APP_DRIVE_STOP);
+    park_start(APP_MODE_SIDE_PARK);
+    input.park_result = APP_PARK_FAILED;
+    step(20);
+    assert(App_GetStatus().error == APP_ERROR_PARK_FAILED && drive == APP_DRIVE_STOP);
+    park_start(APP_MODE_REVERSE_PARK);
+    input.sonar_valid = false;
+    step(20);
+    assert(App_GetStatus().error == APP_ERROR_PARK_SENSOR && drive == APP_DRIVE_STOP);
+}
+
+static void test_wrap_and_display(void)
+{
+    begin(APP_MODE_LAPS, UINT32_MAX - 500U);
+    unsigned old = display_count;
+    step(UINT32_MAX - 450U);
+    assert(display_count == old);
+    waypoint(APP_POINT_B, UINT32_MAX - 400U);
+    assert(display_count == old + 1);
+    waypoint(APP_POINT_C, UINT32_MAX - 300U);
+    waypoint(APP_POINT_D, UINT32_MAX - 200U);
+    waypoint(APP_POINT_A, 499U);
+    assert(App_GetStatus().lap_ms[0] == 1000);
+}
+
+int main(void)
+{
+    test_laps();
+    test_obstacle();
+    test_invalid_and_stop();
+    test_parking();
+    test_wrap_and_display();
+    puts("PASS: 5 application scenario groups");
+    return 0;
+}

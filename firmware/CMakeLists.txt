@@ -7,6 +7,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(HAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F1xx_HAL_Driver")
 add_executable(k_car
     Core/Src/main.c
+    Core/Src/app.c
+    Core/Src/app_modules.c
     Core/Src/newlib_io.c
     Core/Src/stm32f1xx_it.c
     Core/Src/system_stm32f1xx.c

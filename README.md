@@ -10,7 +10,7 @@
 - 调试/烧录：ST-Link，SWD，SWDIO=PA13，SWCLK=PA14。
 - 固件环境：STM32CubeF1 HAL/CMSIS、GNU Arm GCC、CMake、Ninja。
 - IDE：VS Code，STM32 官方扩展；工作区文件为 `k-car.code-workspace`。
-- 固件状态：目前只是时钟、SysTick 和调试变量都正常的初始工程，尚未实现电机、循迹、避障、显示或视觉通信。
+- 固件状态：已加入比赛状态机与模块占位接口，尚未实现实际驱动；最新流程和接线见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)。
 - 非固件资料：采购清单在 `output/pdf/`，生成脚本为 `build_k_bom_pdf.py`，图片与中间产物在 `_k_figs/`、`tmp/`。
 
 目标芯片配置已经落实在工程中：
@@ -100,18 +100,18 @@ RAM:   1600 B / 20 KiB (7.81%)
 |---|---|---|---|
 | TB6612 | PWMB，左电机调速 | PA6 | TIM3_CH1 |
 | TB6612 | PWMA，右电机调速 | PA7 | TIM3_CH2 |
-| TB6612 | 四个方向输入 | PB5、PB6、PB7、PB8 | 普通 GPIO；每个电机具体用哪两个尚未确认 |
+| TB6612 | 四个方向输入 | PB5、PB6、PB7、PB8 | PB5=AIN2、PB6=AIN1、PB7=BIN1、PB8=BIN2 |
 | 四路循迹 | 输入 1～4 | PB0、PB1、PB10、PB11 | 当前按数字量使用；PB0/PB1 也有 ADC，PB10/PB11 只能数字 |
 | MPU6050 串口模块 | STM32 TX → 模块 RX | PA2 | USART2_TX |
 | MPU6050 串口模块 | 模块 TX → STM32 RX | PA3 | USART2_RX；115200、100 Hz，模块 SCL/SDA 不接 |
-| HC-SR04 | Trig / Echo | PA4、PA5 | 两者谁是 Trig 尚未确认；Echo 使用 EXTI + 定时器计时 |
+| HC-SR04 | Trig / Echo | PA4、PA5 | PA4=Trig、PA5=Echo；Echo 使用 EXTI + 定时器计时 |
 | ST7735 TFT | CLK | PB14 | 软件 SPI |
 | ST7735 TFT | SDI/MOSI | PB15 | 软件 SPI |
 | ST7735 TFT | CS | PA1 | 普通 GPIO |
 | ST7735 TFT | DC | PA12 | 普通 GPIO；使用后不再使用 USB |
 | ST7735 TFT | BLK | 3.3 V | 背光常亮；可选改接 PB9 做调光 |
-| ST7735 TFT | SDO/MISO | 不接 | 写屏不需要读回；模块无 RES 脚 |
-| 蜂鸣器 | 信号 | PA0 | TIM2_CH1；有源/无源蜂鸣器的驱动方式需按实物确定 |
+| ST7735 TFT | SDO/MISO | PB13 | 字库读取预留，需接线；模块无 RES 脚 |
+| 蜂鸣器 | 信号 | PA0 | TIM2_CH1；无源蜂鸣器，经三极管驱动 |
 | K230 | STM32 TX → K230 RX | PA9 | USART1_TX，建议 115200 |
 | K230 | K230 TX → STM32 RX | PA10 | USART1_RX |
 | 左编码器 | A 相 | PA8 | EXTI 计数；B 相暂不接 |
@@ -129,18 +129,18 @@ TB6612 输出侧：左电机 `M1/M2` 接 `BO1/BO2`，右电机 `M1/M2` 接 `AO1/
 | 启动/时钟 | PB2、PC14、PC15 | 保留，分别为 BOOT1、OSC32_IN、OSC32_OUT |
 | JTAG 复用 | PA15、PB3、PB4 | 避开；复用需关闭 JTAG，当前不建议使用 |
 | 板载 LED | PC13 | 仅建议做指示灯，驱动能力弱 |
-| 空闲 | PA11、PB9、PB13 | 当前仅有的 3 个普通空闲 GPIO |
+| 空闲 | PA11、PB9 | PB13 已预留给 TFT 字库 |
 
-PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用，PB13 与 SPI2_SCK 复用。若 PB9 用于 TFT 背光，则只剩 PA11、PB13 两个通用空闲脚。
+PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用。若 PB9 用于背光，则只剩 PA11 一个普通空闲脚（不含 JTAG 复用脚）。PB13 预留给 TFT 字库。
 
 ## 6. 未确认事项
 
 以下内容在原引脚表里没有定死。后续 agent 应先查原理图、实物丝印或代码注释，不要把推测写进驱动：
 
-1. **TB6612 方向脚配对未定。** PB5～PB8 全部预留给方向控制，但 AIN1/AIN2 与 BIN1/BIN2 各使用哪两个脚尚未确定。
-2. **HC-SR04 的 PA4/PA5 角色未定。** 需要确认哪一脚接 Trig、哪一脚接 Echo。
+1. **TB6612 配对已确认，极性待实测。** PB5=AIN2、PB6=AIN1、PB7=BIN1、PB8=BIN2，仍需实测车轮前进电平。
+2. **HC-SR04 角色已确认。** PA4=Trig、PA5=Echo。
 3. **编码器只有 A 相已接线。** PA8、PB12 只能做脉冲计数，当前无法从编码器判断方向，也不能做硬件正交解码。若需要方向，必须重新规划 B 相和/或定时器资源。
-4. **外部引脚表末尾的 OLED 备注与占用表冲突。** 备注写“PB12/PB13 空出”，但 PB12 已分配给右编码器 A 相。以模块分配为准：PB12 已占用，PB13 空闲。
+4. **外部引脚表末尾的 OLED 备注已过时。** PB12 已分配给右编码器 A 相，PB13 预留给 TFT 字库，不应再占用。
 5. **TFT 背光默认常亮。** 只有决定使用 PB9 调光时，才把它从“空闲”改为 TFT 背光。
 6. **时钟尚未使用外部晶振。** 若后续要跑 72 MHz，应先确认板上 HSE 晶振频率和起振情况，再改 PLL/Flash latency。
 

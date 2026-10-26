@@ -1,4 +1,5 @@
 #include "main.h"
+#include "app.h"
 
 /* Watch these variables in the debugger. No board-specific GPIO is driven. */
 volatile uint32_t heartbeat_count = 0U;
@@ -41,11 +42,16 @@ int main(void)
     }
     SystemClock_Config();
     system_clock_hz = HAL_RCC_GetSysClockFreq();
+    App_Init(HAL_GetTick());
+    uint32_t heartbeat_ms = HAL_GetTick();
 
     while (1) {
-        HAL_Delay(1000U);
         uptime_ms = HAL_GetTick();
-        heartbeat_count++;
+        App_Task(uptime_ms);
+        if ((uint32_t)(uptime_ms - heartbeat_ms) >= 1000U) {
+            heartbeat_ms = uptime_ms;
+            heartbeat_count++;
+        }
     }
 }
 

@@ -1,0 +1,9 @@
+{
+  "cmake": "C:/Users/29579/AppData/Local/stm32cube/bundles/cmake/4.4.0+st.1/bin/cmake.exe",
+  "ninja": "C:/Users/29579/AppData/Local/stm32cube/bundles/ninja/1.13.2+st.1/bin/ninja.exe",
+  "gcc": "C:/Users/29579/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc.exe",
+  "gdb": "C:/Users/29579/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+  "programmer": "C:/Users/29579/AppData/Local/stm32cube/bundles/programmer/2.23.0/bin/STM32_Programmer_CLI.exe",
+  "gdbserver": "C:/Users/29579/AppData/Local/stm32cube/bundles/stlink-gdbserver/7.14.0+st.2/bin/ST-LINK_gdbserver.exe",
+  "clangd": "C:/Users/29579/AppData/Local/stm32cube/bundles/st-arm-clangd/21.1.0+st.2/bin/starm-clangd.exe"
+}

@@ -1,0 +1,34 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "STM32F103C8T6 - ST-Link (SWD)",
+      "type": "stlinkgdbtarget",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "STM32: Build Debug",
+      "preBuild": "",
+      "runEntry": "main",
+      "deviceName": "STM32F103C8Tx",
+      "deviceCore": "Cortex-M3",
+      "gdb": "C:/Users/29579/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+      "serverExe": "C:/Users/29579/AppData/Local/stm32cube/bundles/stlink-gdbserver/7.14.0+st.2/bin/ST-LINK_gdbserver.exe",
+      "serverCubeProgPath": "C:/Users/29579/AppData/Local/stm32cube/bundles/programmer/2.23.0/bin",
+      "serverInterface": "SWD",
+      "serverInterfaceFrequency": "1000",
+      "serverReset": "Software system reset",
+      "serverRtos": {
+        "enabled": false
+      },
+      "serverSemihosting": {
+        "enabled": false
+      },
+      "imagesAndSymbols": [
+        {
+          "symbolFileName": "${workspaceFolder}/build/Debug/k_car.elf",
+          "imageFileName": "${workspaceFolder}/build/Debug/k_car.elf"
+        }
+      ]
+    }
+  ]
+}

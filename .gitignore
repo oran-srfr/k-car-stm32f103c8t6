@@ -1,0 +1,14 @@
+# Build products
+firmware/build/
+
+# Generated or machine-local scratch files
+tmp/
+work/
+
+# Vendor manuals can be restored from the STM32CubeF1 package
+firmware/Drivers/**/*.chm
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp

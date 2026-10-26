@@ -1,0 +1,11 @@
+{
+  "folders": [
+    {
+      "name": "K Car - STM32F103C8T6",
+      "path": "firmware"
+    }
+  ],
+  "settings": {
+    "stm32cube-ide-clangd.path": "cube"
+  }
+}

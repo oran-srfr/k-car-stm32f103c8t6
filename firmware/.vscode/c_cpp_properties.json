@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "name": "STM32F103C8T6",
+      "compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json",
+      "compilerPath": "C:/Users/29579/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc.exe",
+      "cStandard": "gnu11",
+      "includePath": [
+        "${workspaceFolder}/Core/Inc",
+        "${workspaceFolder}/Drivers/CMSIS/Include",
+        "${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+        "${workspaceFolder}/Drivers/STM32F1xx_HAL_Driver/Inc",
+        "${workspaceFolder}/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy"
+      ],
+      "defines": [
+        "STM32F103xB",
+        "USE_HAL_DRIVER"
+      ]
+    }
+  ],
+  "version": 4
+}

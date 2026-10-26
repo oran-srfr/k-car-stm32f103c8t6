@@ -70,7 +70,7 @@ and is converted to the range -180 to +180 degrees.
   rotation alone is not treated as proof that the car reached point A.
 - The provided example's `StartLine` and `RunStart` modules were not copied.
   They would duplicate the current application's start and lap arbitration.
-- No start button, tracking algorithm, motor output, vision parser, or buzzer
+- No start button, tracking algorithm, motor output, or vision parser
   implementation is added by this integration.
 
 ## Debugging

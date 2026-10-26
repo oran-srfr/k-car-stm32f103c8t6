@@ -10,7 +10,7 @@
 - 调试/烧录：ST-Link，SWD，SWDIO=PA13，SWCLK=PA14。
 - 固件环境：STM32CubeF1 HAL/CMSIS、GNU Arm GCC、CMake、Ninja。
 - IDE：VS Code，STM32 官方扩展；工作区文件为 `k-car.code-workspace`。
-- 固件状态：已加入比赛状态机、HC-SR04 测距、ST7735 人机界面和 MPU6050 串口姿态/圈计时链路；电机、循迹、视觉、蜂鸣器和停车动作仍未实现。流程见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，显示与姿态说明见 [firmware/HMI_ATTITUDE.md](firmware/HMI_ATTITUDE.md)。
+- 固件状态：已加入比赛状态机、HC-SR04 测距、ST7735 人机界面和 MPU6050 串口姿态/圈计时链路；蜂鸣器提示音也已接入，见 [firmware/BUZZER.md](firmware/BUZZER.md)；电机、循迹、视觉和停车动作仍未实现。流程见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，显示与姿态说明见 [firmware/HMI_ATTITUDE.md](firmware/HMI_ATTITUDE.md)。
 - 非固件资料：采购清单在 `output/pdf/`，生成脚本为 `build_k_bom_pdf.py`，图片与中间产物在 `_k_figs/`、`tmp/`。
 
 目标芯片配置已经落实在工程中：
@@ -167,7 +167,7 @@ PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用。若 P
 
 1. 先确认 `Ctrl+Shift+B` 可编译，再用 ST-Link 验证连接和下载。
 2. 在架空车轮的条件下验证 TB6612 的左右电机、方向脚配对和 PWM 极性。
-3. 已接入超声波、TFT/HCI 和 MPU6050；下一步实现循迹、发车输入、电机控制、K230 和蜂鸣器。
+3. 已接入超声波、TFT/HCI 和 MPU6050；蜂鸣器提示音也已接入；下一步实现循迹、发车输入、电机控制和 K230。
 4. 每完成一个模块，同步更新本文的接线表、未确认事项和 HAL/CMake 模块列表。
 5. 修改引脚前先检查 `firmware/Core`、`firmware/CMakeLists.txt`、`firmware/.vscode/launch.json` 和本文，避免代码、构建与文档三套配置漂移。
 

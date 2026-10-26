@@ -1,8 +1,8 @@
 # 比赛主流程框架
 
 本框架实现任务调度、状态转换、HC-SR04 超声波、TFT 人机界面和 MPU6050 串口姿态/圈计时。
-视觉、蜂鸣器、循迹和停车动作仍为待实现接口。
-默认无有效循迹数据、无发车事件，保持等待；初始化超声波、TFT 和 USART2，不启用电机。
+蜂鸣器已通过 TIM2/PA0 接入；视觉、循迹和停车动作仍为待实现接口。
+默认无有效循迹数据、无发车事件，保持等待；初始化超声波、TFT、USART2 和静音状态的 TIM2 蜂鸣器，不启用电机。
 不能据此宣称小车已经能循迹、识别车位或完成停车。
 
 ## 文件入口
@@ -14,6 +14,7 @@
 - `Core/Src/ultrasonic.c`、`ultrasonic_stm32.c`：非阻塞测距逻辑、STM32 HAL GPIO 与 TIM4/EXTI 硬件适配，见 [ULTRASONIC.md](ULTRASONIC.md)。
 - `Core/Src/Attitude.c`、`MpuLink.c`、`LapTimer.c`：USART2 姿态链路、串口帧解析与陀螺仪圈计时，见 [HMI_ATTITUDE.md](HMI_ATTITUDE.md)。
 - `Core/Src/HCI.c`、`lcd.c`、`lcd_init.c`、`zk.c`：ST7735 显示、ASCII/GB2312 字库和五项比赛数据界面。
+- `Core/Src/buzzer.c`、`buzzer_stm32.c`：非阻塞提示音调度与 TIM2 PWM，见 [BUZZER.md](BUZZER.md)。
 - `Core/Inc/board_pins.h`：已确认接线定义，不产生硬件操作。
 
 ## 三种独立比赛模式
@@ -64,7 +65,7 @@ HMI 的显示端已接入；模式和一次发车按键边沿仍待输入层实�
 | TFT SCL / MOSI / CS / DC / MISO | PB14 / PB15 / PA1 / PA12 / PB13 |
 
 引脚已确认不等于电机正反转电平已标定。电机 PWM、PID、循迹黑白电平、位置识别、
-视觉通信、蜂鸣器及停车轨迹仍待实现；超声波、显示和姿态解析已接入，尚待实测。当前仍使用 HSI 8 MHz，
+视觉通信及停车轨迹仍待实现；蜂鸣器、超声波、显示和姿态解析已接入，尚待实测。当前仍使用 HSI 8 MHz，
 定时器预分频必须按实际时钟计算，不能照抄 72 MHz 下的 PSC=71。
 
 ## 验证

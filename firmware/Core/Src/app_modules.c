@@ -2,6 +2,7 @@
 #include "Attitude.h"
 #include "HCI.h"
 #include "board_pins.h"
+#include "buzzer.h"
 #include "lcd_init.h"
 #include "ultrasonic.h"
 #include "stm32f1xx_hal.h"
@@ -42,17 +43,18 @@ static void Parking_Poll(AppInputs *inputs)
 
 void Modules_Init(void)
 {
+    (void)Buzzer_Init();
     (void)Ulr_Init(HAL_GetTick());
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);
-    /* TODO: motor safe-stop, line sensors, encoders, buzzer.
+    /* TODO: motor safe-stop, line sensors, encoders.
      * Keep motors stopped until all required inputs have been validated. */
 }
 
 void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
 {
-    (void)now_ms;
+    Buzzer_Task(now_ms);
     /* Safe placeholders: no start event, no valid sensors, no invented results.
      * TODO HMI: edge-triggered start/stop and mode selection.
      * TODO line/attitude: line validity and qualified A/B/C/D waypoint events.
@@ -94,8 +96,15 @@ void Modules_Drive(AppDrive command)
 
 void Modules_Sound(AppSound event)
 {
-    (void)event;
-    /* TODO enqueue a tone pattern; PWM timing must not block the main loop. */
+    BuzzerEvent sound;
+    switch (event) {
+    case APP_SOUND_B: sound = BUZZER_POINT_B; break;
+    case APP_SOUND_C: sound = BUZZER_POINT_C; break;
+    case APP_SOUND_OBSTACLE: sound = BUZZER_OBSTACLE; break;
+    case APP_SOUND_LEAVE_LINE: sound = BUZZER_LEAVE_LINE; break;
+    default: return;
+    }
+    (void)Buzzer_Play(sound, HAL_GetTick());
 }
 
 void Modules_Display(const AppStatus *status)

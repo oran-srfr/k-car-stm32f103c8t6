@@ -9,6 +9,8 @@ add_executable(k_car
     Core/Src/main.c
     Core/Src/app.c
     Core/Src/app_modules.c
+    Core/Src/buzzer.c
+    Core/Src/buzzer_stm32.c
     Core/Src/Attitude.c
     Core/Src/HCI.c
     Core/Src/LapTimer.c

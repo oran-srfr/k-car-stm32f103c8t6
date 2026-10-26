@@ -30,7 +30,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 
 `Core/Src/main.c` 使用内部 HSI 8 MHz 时钟，不依赖开发板外部晶振。`App_Init()`
 会初始化 HC-SR04、ST7735/HCI 和 USART2 姿态模块；`App_Task()` 在主循环中测距、
-接收 MPU6050 角度帧、运行圈计时并每 100 ms 刷新屏幕。电机、循迹、视觉和蜂鸣器仍未实现。
+接收 MPU6050 角度帧、运行圈计时并每 100 ms 刷新屏幕。蜂鸣器已接入，说明见 [BUZZER.md](BUZZER.md)。电机、循迹和视觉仍未实现。
 
 已加入比赛任务状态机与模块占位接口，详见 [FRAMEWORK.md](FRAMEWORK.md)。
 HC-SR04 说明见 [ULTRASONIC.md](ULTRASONIC.md)，人机界面与串口姿态链路见

@@ -39,6 +39,7 @@ try {
 
     Invoke-Test -Name 'test_app' -Sources @('Core/Src/app.c', 'tests/test_app.c')
     Invoke-Test -Name 'test_ultrasonic' -Sources @('Core/Src/ultrasonic.c', 'tests/test_ultrasonic.c')
+    Invoke-Test -Name 'test_buzzer' -Sources @('Core/Src/buzzer.c', 'tests/test_buzzer.c')
     Invoke-Test -Name 'test_laptimer' -Sources @('Core/Src/LapTimer.c', 'tests/test_laptimer.c')
     Invoke-Test -Name 'test_mpulink' -Sources @('Core/Src/MpuLink.c', 'tests/test_mpulink.c') -Extra @('-Itests')
 

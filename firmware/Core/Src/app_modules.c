@@ -1,4 +1,8 @@
 #include "app_modules.h"
+#include "Attitude.h"
+#include "HCI.h"
+#include "board_pins.h"
+#include "lcd_init.h"
 #include "ultrasonic.h"
 #include "stm32f1xx_hal.h"
 
@@ -21,6 +25,11 @@ static void Sonar_Poll(uint32_t now_ms, AppInputs *inputs)
     inputs->sonar_sample_ms = sample.sample_ms;
 }
 
+static void Mpu_Poll(uint32_t now_ms)
+{
+    Attitude_Poll(now_ms);
+}
+
 static void Tracking_Poll(AppInputs *inputs)
 {
     (void)inputs; /* TODO: line_valid + qualified geometric waypoint events. */
@@ -34,7 +43,10 @@ static void Parking_Poll(AppInputs *inputs)
 void Modules_Init(void)
 {
     (void)Ulr_Init(HAL_GetTick());
-    /* TODO: motor safe-stop, line sensors, encoders, UARTs, buzzer, HMI.
+    LCD_Init();
+    HCI_Init();
+    (void)Attitude_Init(ATTITUDE_BAUD_RATE);
+    /* TODO: motor safe-stop, line sensors, encoders, buzzer.
      * Keep motors stopped until all required inputs have been validated. */
 }
 
@@ -52,9 +64,24 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
     *inputs = (AppInputs){ .park_result = APP_PARK_BUSY };
     HMI_Poll(inputs);
     Vision_Poll(inputs);
+    Mpu_Poll(now_ms);
     Sonar_Poll(now_ms, inputs);
     Tracking_Poll(inputs);
     Parking_Poll(inputs);
+}
+
+void Modules_RunStarted(AppMode mode, uint32_t now_ms)
+{
+    if (mode == APP_MODE_LAPS) {
+        Attitude_StartLap(now_ms);
+    } else {
+        Attitude_StopLap();
+    }
+}
+
+void Modules_RunStopped(void)
+{
+    Attitude_StopLap();
 }
 
 void Modules_Drive(AppDrive command)
@@ -73,7 +100,13 @@ void Modules_Sound(AppSound event)
 
 void Modules_Display(const AppStatus *status)
 {
-    (void)status;
-    /* TODO render the two lap times and three identification counters.
-     * Called every 100 ms; repaint only changed fields. HMI must not drive motors. */
+    AttitudeStatus attitude;
+
+    Attitude_GetStatus(&attitude);
+    HCI_Lap1Ms = attitude.lap.lap1_ms;
+    HCI_Lap2Ms = attitude.lap.lap2_ms;
+    HCI_ObsCount = status->obstacles;
+    HCI_RevCount = status->reverse_spaces;
+    HCI_SideCount = status->side_spaces;
+    HCI_Update();
 }

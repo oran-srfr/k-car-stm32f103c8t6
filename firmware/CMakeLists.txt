@@ -9,6 +9,13 @@ add_executable(k_car
     Core/Src/main.c
     Core/Src/app.c
     Core/Src/app_modules.c
+    Core/Src/Attitude.c
+    Core/Src/HCI.c
+    Core/Src/LapTimer.c
+    Core/Src/MpuLink.c
+    Core/Src/lcd.c
+    Core/Src/lcd_init.c
+    Core/Src/zk.c
     Core/Src/ultrasonic.c
     Core/Src/ultrasonic_stm32.c
     Core/Src/newlib_io.c
@@ -26,6 +33,7 @@ add_executable(k_car
     ${HAL_DIR}/Src/stm32f1xx_hal_pwr.c
     ${HAL_DIR}/Src/stm32f1xx_hal_rcc.c
     ${HAL_DIR}/Src/stm32f1xx_hal_rcc_ex.c
+    ${HAL_DIR}/Src/stm32f1xx_hal_uart.c
 )
 set_target_properties(k_car PROPERTIES SUFFIX ".elf")
 target_compile_definitions(k_car PRIVATE STM32F103xB USE_HAL_DRIVER)
@@ -50,6 +58,7 @@ target_link_options(k_car PRIVATE
     "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/k_car.map"
     -Wl,--print-memory-usage
 )
+target_link_libraries(k_car PRIVATE m)
 add_custom_command(TARGET k_car POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:k_car> ${CMAKE_CURRENT_BINARY_DIR}/k_car.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:k_car> ${CMAKE_CURRENT_BINARY_DIR}/k_car.bin

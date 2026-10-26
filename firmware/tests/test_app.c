@@ -10,6 +10,8 @@ static unsigned display_count;
 
 void Modules_Init(void) {}
 void Modules_Poll(uint32_t now, AppInputs *out) { (void)now; *out = input; }
+void Modules_RunStarted(AppMode mode, uint32_t now) { (void)mode; (void)now; }
+void Modules_RunStopped(void) {}
 void Modules_Drive(AppDrive command) { drive = command; }
 void Modules_Sound(AppSound event) { ++sounds[event]; }
 void Modules_Display(const AppStatus *s) { (void)s; ++display_count; }

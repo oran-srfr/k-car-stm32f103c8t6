@@ -10,7 +10,7 @@
 - 调试/烧录：ST-Link，SWD，SWDIO=PA13，SWCLK=PA14。
 - 固件环境：STM32CubeF1 HAL/CMSIS、GNU Arm GCC、CMake、Ninja。
 - IDE：VS Code，STM32 官方扩展；工作区文件为 `k-car.code-workspace`。
-- 固件状态：已加入比赛状态机与 HC-SR04 非阻塞测距驱动，其余模块仍为占位接口；最新流程和接线见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，测距说明见 [firmware/ULTRASONIC.md](firmware/ULTRASONIC.md)。
+- 固件状态：已加入比赛状态机、HC-SR04 测距、ST7735 人机界面和 MPU6050 串口姿态/圈计时链路；电机、循迹、视觉、蜂鸣器和停车动作仍未实现。流程见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，显示与姿态说明见 [firmware/HMI_ATTITUDE.md](firmware/HMI_ATTITUDE.md)。
 - 非固件资料：采购清单在 `output/pdf/`，生成脚本为 `build_k_bom_pdf.py`，图片与中间产物在 `_k_figs/`、`tmp/`。
 
 目标芯片配置已经落实在工程中：
@@ -58,8 +58,8 @@ k_car.map  # 链接映射
 本机当前 Debug 构建基线：
 
 ```text
-FLASH: 2700 B / 64 KiB (4.12%)
-RAM:   1600 B / 20 KiB (7.81%)
+FLASH: 15092 B / 64 KiB (23.03%)
+RAM:    2296 B / 20 KiB (11.21%)
 ```
 
 ## 3. 环境配置位置
@@ -79,14 +79,17 @@ RAM:   1600 B / 20 KiB (7.81%)
 
 ## 4. 当前固件
 
-入口是 `firmware/Core/Src/main.c`。当前程序只做以下事情：
+入口是 `firmware/Core/Src/main.c`。当前程序做以下事情：
 
 1. `HAL_Init()` 初始化 HAL 与 SysTick。
 2. 使用内部 HSI 8 MHz，不假设外部晶振频率。
-3. 每秒递增 `heartbeat_count`，更新 `uptime_ms`。
-4. 可用调试器查看 `system_clock_hz`（当前应为 `8000000`）和 `error_code`（正常为 `0`）。
+3. `App_Init()` 初始化超声波、TFT/HCI 和 USART2 姿态链路。
+4. 主循环调用 `App_Task()`，每 100 ms 刷新屏幕，并接收 MPU6050 串口角度帧。
+5. 每秒递增 `heartbeat_count`；可用调试器查看 `system_clock_hz`（当前应为 `8000000`）。
 
-`firmware/Core/Inc/stm32f1xx_hal_conf.h` 目前只启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC 模块。新增 TIM、USART、ADC、I2C、SPI 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
+`firmware/Core/Inc/stm32f1xx_hal_conf.h` 当前启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC、UART 模块。新增 ADC、I2C、硬件 SPI 或 HAL TIM 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
+
+TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。当前没有发车按键、有效循迹算法或电机输出，因此上电后仍不会自动开始比赛或驱动车轮。
 
 工程没有 CubeMX `.ioc`，是手工组织的 CMake 工程。不要用其他板型的 CubeMX 输出直接覆盖现有目录。
 
@@ -164,7 +167,7 @@ PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用。若 P
 
 1. 先确认 `Ctrl+Shift+B` 可编译，再用 ST-Link 验证连接和下载。
 2. 在架空车轮的条件下验证 TB6612 的左右电机、方向脚配对和 PWM 极性。
-3. 按模块逐个实现：循迹 → 超声波 → MPU6050 → 编码器 → TFT → K230。
+3. 已接入超声波、TFT/HCI 和 MPU6050；下一步实现循迹、发车输入、电机控制、K230 和蜂鸣器。
 4. 每完成一个模块，同步更新本文的接线表、未确认事项和 HAL/CMake 模块列表。
 5. 修改引脚前先检查 `firmware/Core`、`firmware/CMakeLists.txt`、`firmware/.vscode/launch.json` 和本文，避免代码、构建与文档三套配置漂移。
 
@@ -178,7 +181,7 @@ PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用。若 P
 │   ├── CMakeLists.txt          # 目标、源文件和内存布局入口
 │   ├── CMakePresets.json       # Debug/Release 预设
 │   ├── STM32F103C8Tx_FLASH.ld  # C8T6 链接脚本
-│   ├── Core/                   # 启动、HAL 配置、主程序和中断
+│   ├── Core/                   # 启动、状态机、HMI、姿态、超声波和 HAL 配置
 │   ├── Drivers/                # ST HAL/CMSIS 第三方源码
 │   ├── tools/                  # 本机构建、烧录、探针脚本
 │   └── .vscode/                # 构建、调试、IntelliSense 配置

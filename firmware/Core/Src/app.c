@@ -22,6 +22,7 @@ static void increment(uint16_t *counter)
 
 static void fail(AppError error)
 {
+    Modules_RunStopped();
     status.error = error;
     status.state = APP_FAULT;
 }
@@ -47,6 +48,7 @@ static void begin_run(AppMode mode, uint32_t now_ms)
     lap_start_ms = now_ms;
     expected_point = APP_POINT_B;
     obstacle_latched = departure_sounded = false;
+    Modules_RunStarted(mode, now_ms);
 }
 
 static void follow(const AppInputs *in, uint32_t now_ms)
@@ -88,6 +90,7 @@ void App_Task(uint32_t now_ms)
 
     /* Stop overrides all progress and start events. Restart requires a new press. */
     if (in.stop_pressed) {
+        Modules_RunStopped();
         status.state = APP_WAIT_START;
     } else if (!active && in.start_pressed && (unsigned)in.selected_mode <= APP_MODE_REVERSE_PARK &&
                in.line_valid && sonar_fresh && in.distance_mm > OBSTACLE_STOP_MM) {
@@ -120,6 +123,10 @@ void App_Task(uint32_t now_ms)
                 if (in.park_result == APP_PARK_DONE) { status.state = APP_FINISHED; }
             }
         }
+    }
+
+    if (status.state == APP_FINISHED) {
+        Modules_RunStopped();
     }
 
     AppDrive drive = APP_DRIVE_STOP;

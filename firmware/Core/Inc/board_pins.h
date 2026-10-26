@@ -30,6 +30,10 @@
 #define TFT_CONTROL_PORT GPIOA
 #define TFT_CS_PIN GPIO_PIN_1
 #define TFT_DC_PIN GPIO_PIN_12
+#define ATTITUDE_PORT GPIOA
+#define ATTITUDE_TX_PIN GPIO_PIN_2
+#define ATTITUDE_RX_PIN GPIO_PIN_3
+#define ATTITUDE_BAUD_RATE 115200U
 /* PA9/PA10: USART1 K230; PA2/PA3: USART2 attitude module.
  * PA8/PB12: encoder A; PA13/PA14: SWD, keep reserved.
  * TB6612 STBY is wired to 3.3 V, not an MCU pin.

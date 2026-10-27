@@ -42,6 +42,7 @@ try {
     Invoke-Test -Name 'test_buzzer' -Sources @('Core/Src/buzzer.c', 'tests/test_buzzer.c')
     Invoke-Test -Name 'test_laptimer' -Sources @('Core/Src/LapTimer.c', 'tests/test_laptimer.c')
     Invoke-Test -Name 'test_mpulink' -Sources @('Core/Src/MpuLink.c', 'tests/test_mpulink.c') -Extra @('-Itests')
+    Invoke-Test -Name 'test_tracking' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'tests/test_tracking.c')
 
     if ($script:failed -ne 0) {
         Write-Host "$($script:failed) test executable(s) failed." -ForegroundColor Red

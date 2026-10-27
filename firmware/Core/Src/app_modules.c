@@ -3,9 +3,38 @@
 #include "HCI.h"
 #include "board_pins.h"
 #include "buzzer.h"
+#include "control_config.h"
 #include "lcd_init.h"
+#include "line_sensor.h"
+#include "motor_driver.h"
 #include "ultrasonic.h"
+#include "vehicle_control.h"
 #include "stm32f1xx_hal.h"
+
+static PDControllerConfig_t s_pd_config = {
+    CONTROL_KP_DEFAULT,
+    CONTROL_KD_DEFAULT,
+    CONTROL_PD_OUTPUT_LIMIT_DEFAULT
+};
+static MotorCommandConfig_t s_motor_command_config = {
+    CONTROL_BASE_SPEED_DEFAULT,
+    CONTROL_MAX_FORWARD_COMMAND_DEFAULT
+};
+static LineFollowConfig_t s_line_follow_config = {
+    LINE_FOLLOW_CURVE_SPEED_DEFAULT,
+    LINE_FOLLOW_SHARP_CURVE_SPEED_DEFAULT,
+    LINE_FOLLOW_SEARCH_SPEED_DEFAULT,
+    LINE_FOLLOW_STRAIGHT_MAX_DEVIATION_DEFAULT,
+    LINE_FOLLOW_CURVE_MAX_DEVIATION_DEFAULT,
+    LINE_FOLLOW_SEARCH_CORRECTION_DEFAULT,
+    LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT,
+    LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
+};
+static uint32_t s_last_control_ms;
+
+volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
+volatile uint8_t g_tracking_bits = 0U;
+volatile float g_tracking_deviation = 0.0f;
 
 static void HMI_Poll(AppInputs *inputs)
 {
@@ -31,9 +60,27 @@ static void Mpu_Poll(uint32_t now_ms)
     Attitude_Poll(now_ms);
 }
 
-static void Tracking_Poll(AppInputs *inputs)
+static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
 {
-    (void)inputs; /* TODO: line_valid + qualified geometric waypoint events. */
+    VehicleControlOutput_t vehicle;
+
+    if ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS) {
+        s_last_control_ms = now_ms;
+        VehicleControl_Update();
+    }
+
+    vehicle = VehicleControl_GetOutput();
+    if ((vehicle.line_follow.state == LINE_FOLLOW_FAULT) &&
+        (vehicle.line_follow.control.track.status == LINE_TRACK_STATUS_NORMAL)) {
+        /* The board may be powered before it is placed on the track. */
+        VehicleControl_Start();
+        VehicleControl_Update();
+        vehicle = VehicleControl_GetOutput();
+    }
+    inputs->line_valid = vehicle.line_output_valid;
+    g_tracking_status = vehicle.line_follow.control.track.status;
+    g_tracking_bits = vehicle.line_follow.control.track.black_bits;
+    g_tracking_deviation = vehicle.line_follow.control.track.deviation;
 }
 
 static void Parking_Poll(AppInputs *inputs)
@@ -45,19 +92,24 @@ void Modules_Init(void)
 {
     (void)Buzzer_Init();
     (void)Ulr_Init(HAL_GetTick());
+    LineSensor_Init();
+    MotorDriver_Init();
+    VehicleControl_Init(&s_pd_config, &s_motor_command_config, &s_line_follow_config);
+    VehicleControl_Start();
+    s_last_control_ms = HAL_GetTick();
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);
-    /* TODO: motor safe-stop, line sensors, encoders.
-     * Keep motors stopped until all required inputs have been validated. */
+    /* Motor output remains gated until the application requests FOLLOW. */
 }
 
 void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
 {
     Buzzer_Task(now_ms);
-    /* Safe placeholders: no start event, no valid sensors, no invented results.
+    /* Line validity comes from the four-sensor PD follower. Position events,
+     * HMI input and vision remain placeholders; do not invent them.
      * TODO HMI: edge-triggered start/stop and mode selection.
-     * TODO line/attitude: line validity and qualified A/B/C/D waypoint events.
+     * TODO position: qualified A/B/C/D waypoint events.
      * TODO vision: parse K230 UART in foreground, validate and deduplicate frames;
      * publish parking_space_event for the selected mode.
      * Sonar publishes actual sample timestamps; failure => invalid.
@@ -68,7 +120,7 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
     Vision_Poll(inputs);
     Mpu_Poll(now_ms);
     Sonar_Poll(now_ms, inputs);
-    Tracking_Poll(inputs);
+    Tracking_Poll(now_ms, inputs);
     Parking_Poll(inputs);
 }
 
@@ -83,15 +135,17 @@ void Modules_RunStarted(AppMode mode, uint32_t now_ms)
 
 void Modules_RunStopped(void)
 {
+    VehicleControl_SetMotorOutputEnabled(false);
     Attitude_StopLap();
 }
 
 void Modules_Drive(AppDrive command)
 {
-    (void)command;
-    /* TODO motor controller: STOP, line following, side/reverse maneuver step.
-     * STOP must be idempotent and cancel/reset any parking maneuver progress.
-     * No GPIO/PWM is enabled by this scaffold. */
+    if (command == APP_DRIVE_FOLLOW) {
+        VehicleControl_SetMotorOutputEnabled(true);
+    } else {
+        VehicleControl_SetMotorOutputEnabled(false);
+    }
 }
 
 void Modules_Sound(AppSound event)

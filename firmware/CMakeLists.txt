@@ -14,9 +14,17 @@ add_executable(k_car
     Core/Src/Attitude.c
     Core/Src/HCI.c
     Core/Src/LapTimer.c
+    Core/Src/line_control.c
+    Core/Src/line_follow.c
+    Core/Src/line_sensor.c
+    Core/Src/line_track.c
     Core/Src/MpuLink.c
     Core/Src/lcd.c
     Core/Src/lcd_init.c
+    Core/Src/motor_command.c
+    Core/Src/motor_driver.c
+    Core/Src/pd_controller.c
+    Core/Src/vehicle_control.c
     Core/Src/zk.c
     Core/Src/ultrasonic.c
     Core/Src/ultrasonic_stm32.c

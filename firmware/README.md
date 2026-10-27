@@ -29,13 +29,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 ## 当前程序
 
 `Core/Src/main.c` 使用内部 HSI 8 MHz 时钟，不依赖开发板外部晶振。`App_Init()`
-会初始化 HC-SR04、ST7735/HCI 和 USART2 姿态模块；`App_Task()` 在主循环中测距、
-接收 MPU6050 角度帧、运行圈计时并每 100 ms 刷新屏幕。蜂鸣器已接入，说明见 [BUZZER.md](BUZZER.md)。电机、循迹和视觉仍未实现。
+会初始化 HC-SR04、四路循迹/TIM3 电机、ST7735/HCI 和 USART2 姿态模块；`App_Task()`
+在主循环中测距、按 10 ms 更新循迹、接收 MPU6050 角度帧、运行圈计时并每 100 ms
+刷新屏幕。蜂鸣器、循迹和电机控制已接入，说明见 [BUZZER.md](BUZZER.md) 和
+[LINE_FOLLOW.md](LINE_FOLLOW.md)；视觉和停车动作仍未实现。
 
 已加入比赛任务状态机与模块占位接口，详见 [FRAMEWORK.md](FRAMEWORK.md)。
 HC-SR04 说明见 [ULTRASONIC.md](ULTRASONIC.md)，人机界面与串口姿态链路见
-[HMI_ATTITUDE.md](HMI_ATTITUDE.md)。当前默认等待发车，因为发车按键和有效循迹输入
-仍是占位接口；不要据此认为小车已经能自动跑圈。保留 PA13/PA14 的 SWD 调试功能。
+[HMI_ATTITUDE.md](HMI_ATTITUDE.md)。当前默认等待发车，因为发车按键和 A/B/C/D
+位置识别仍是占位接口；四路循迹和电机输出虽已接通，但参数尚未实车标定。
+保留 PA13/PA14 的 SWD 调试功能。
 
 工程使用 `STM32F103xB` 器件宏、`startup_stm32f103xb.s` 和
 `STM32F103C8Tx_FLASH.ld`。本工程手工组织 CMake 和 HAL 源文件，当前不包含 CubeMX `.ioc`；不要把其他板型的

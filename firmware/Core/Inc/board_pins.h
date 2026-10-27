@@ -23,6 +23,7 @@
 #define TRACK_2_PIN GPIO_PIN_1
 #define TRACK_3_PIN GPIO_PIN_10
 #define TRACK_4_PIN GPIO_PIN_11
+/* Raw order X1..X4 = PB0, PB1, PB10, PB11; default black level is low. */
 #define TFT_PORT GPIOB
 #define TFT_CLK_PIN GPIO_PIN_14
 #define TFT_MOSI_PIN GPIO_PIN_15

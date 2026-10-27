@@ -10,7 +10,7 @@
 - 调试/烧录：ST-Link，SWD，SWDIO=PA13，SWCLK=PA14。
 - 固件环境：STM32CubeF1 HAL/CMSIS、GNU Arm GCC、CMake、Ninja。
 - IDE：VS Code，STM32 官方扩展；工作区文件为 `k-car.code-workspace`。
-- 固件状态：已加入比赛状态机、HC-SR04 测距、ST7735 人机界面和 MPU6050 串口姿态/圈计时链路；蜂鸣器提示音也已接入，见 [firmware/BUZZER.md](firmware/BUZZER.md)；电机、循迹、视觉和停车动作仍未实现。流程见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，显示与姿态说明见 [firmware/HMI_ATTITUDE.md](firmware/HMI_ATTITUDE.md)。
+- 固件状态：已加入比赛状态机、HC-SR04 测距、ST7735 人机界面、MPU6050 姿态/圈计时、蜂鸣器和四路循迹/TB6612 电机控制栈；循迹参数尚未实车标定，视觉和停车动作仍未实现。流程见 [firmware/FRAMEWORK.md](firmware/FRAMEWORK.md)，循迹说明见 [firmware/LINE_FOLLOW.md](firmware/LINE_FOLLOW.md)。
 - 非固件资料：采购清单在 `output/pdf/`，生成脚本为 `build_k_bom_pdf.py`，图片与中间产物在 `_k_figs/`、`tmp/`。
 
 目标芯片配置已经落实在工程中：
@@ -58,8 +58,8 @@ k_car.map  # 链接映射
 本机当前 Debug 构建基线：
 
 ```text
-FLASH: 15092 B / 64 KiB (23.03%)
-RAM:    2296 B / 20 KiB (11.21%)
+FLASH: 21076 B / 64 KiB (32.16%)
+RAM:    2616 B / 20 KiB (12.77%)
 ```
 
 ## 3. 环境配置位置
@@ -67,7 +67,7 @@ RAM:    2296 B / 20 KiB (11.21%)
 - `firmware/.vscode/launch.json`：ST-Link/SWD 调试目标，设备名已改成 `STM32F103C8Tx`，速度为 1 MHz。
 - `firmware/.vscode/tasks.json`：Debug/Release 编译、烧录、探针和工具检查任务。
 - `firmware/.vscode/settings.json`：CMake、C/C++ IntelliSense、终端 PATH。这里含本机绝对路径。
-- `firmware/.vscode/c_cpp_properties.json`：IntelliSense 直接读取 `build/Debug/compile_commands.json`，并使用 C8T6 的宏和头文件路径。
+- `firmware/.vscode/c_cpp_properties.json`：IntelliSense 使用 C8T6 宏、工程头文件和 ARM/Newlib 系统头文件路径；不依赖编译器自动探测。
 - `firmware/tools/toolchain.local.json`：构建脚本使用的本机工具路径。
 - `firmware/CMakePresets.json`：Debug/Release 预设和输出目录。
 - `firmware/cmake/arm-none-eabi.cmake`：`cortex-m3`、`thumb`、软件浮点交叉编译设置。
@@ -83,13 +83,13 @@ RAM:    2296 B / 20 KiB (11.21%)
 
 1. `HAL_Init()` 初始化 HAL 与 SysTick。
 2. 使用内部 HSI 8 MHz，不假设外部晶振频率。
-3. `App_Init()` 初始化超声波、TFT/HCI 和 USART2 姿态链路。
-4. 主循环调用 `App_Task()`，每 100 ms 刷新屏幕，并接收 MPU6050 串口角度帧。
+3. `App_Init()` 初始化超声波、四路循迹/TIM3 电机、TFT/HCI 和 USART2 姿态链路。
+4. 主循环调用 `App_Task()`；循迹控制按 10 ms 更新，屏幕每 100 ms 刷新。
 5. 每秒递增 `heartbeat_count`；可用调试器查看 `system_clock_hz`（当前应为 `8000000`）。
 
 `firmware/Core/Inc/stm32f1xx_hal_conf.h` 当前启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC、UART 模块。新增 ADC、I2C、硬件 SPI 或 HAL TIM 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
 
-TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。当前没有发车按键、有效循迹算法或电机输出，因此上电后仍不会自动开始比赛或驱动车轮。
+TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，使用 PD 修正和 TIM3 PWM 电机输出；电机门控只在应用进入 `APP_DRIVE_FOLLOW` 时打开。当前没有发车按键和 A/B/C/D 位置识别，因此上电后仍停在等待状态，不会自动起步。
 
 工程没有 CubeMX `.ioc`，是手工组织的 CMake 工程。不要用其他板型的 CubeMX 输出直接覆盖现有目录。
 
@@ -167,7 +167,7 @@ PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用。若 P
 
 1. 先确认 `Ctrl+Shift+B` 可编译，再用 ST-Link 验证连接和下载。
 2. 在架空车轮的条件下验证 TB6612 的左右电机、方向脚配对和 PWM 极性。
-3. 已接入超声波、TFT/HCI 和 MPU6050；蜂鸣器提示音也已接入；下一步实现循迹、发车输入、电机控制和 K230。
+3. 超声波、TFT/HCI、MPU6050、蜂鸣器、四路循迹和电机控制已接入；下一步实现发车输入、位置事件、参数标定、K230 和停车动作。
 4. 每完成一个模块，同步更新本文的接线表、未确认事项和 HAL/CMake 模块列表。
 5. 修改引脚前先检查 `firmware/Core`、`firmware/CMakeLists.txt`、`firmware/.vscode/launch.json` 和本文，避免代码、构建与文档三套配置漂移。
 

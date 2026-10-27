@@ -17,8 +17,10 @@ bool BuzzerHw_Init(void)
     __HAL_RCC_TIM2_FORCE_RESET();
     __HAL_RCC_TIM2_RELEASE_RESET();
 
-    /* Hold the transistor input low even if this clock/routing is unsupported. */
-    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+    /* The installed module is active-low: hold PA0 high for silence,
+     * including the failure path when the timer clock or remap is invalid. */
+    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN,
+                      (BUZZER_ACTIVE_LOW != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
     GPIO_InitTypeDef gpio = {0};
     gpio.Pin = BUZZER_PIN;
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
@@ -30,7 +32,8 @@ bool BuzzerHw_Init(void)
     TIM2->ARR = 999U;
     TIM2->CCR1 = 0U;
     TIM2->CCMR1 = TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1PE;
-    TIM2->CCER = TIM_CCER_CC1E; /* PWM1, active high, only CH1 enabled. */
+    TIM2->CCER = TIM_CCER_CC1E |
+                 ((BUZZER_ACTIVE_LOW != 0U) ? TIM_CCER_CC1P : 0U);
     TIM2->CR1 = TIM_CR1_ARPE;
     TIM2->EGR = TIM_EGR_UG;
     TIM2->SR = 0U;
@@ -43,7 +46,7 @@ void BuzzerHw_SetFrequency(uint16_t frequency_hz)
 {
     TIM2->CR1 &= ~TIM_CR1_CEN;
     if (frequency_hz == 0U) {
-        /* Force OC1REF inactive as well as clearing CCR: never freeze PA0 high. */
+        /* Force OC1REF inactive. CC1P inverts it to the silent level. */
         TIM2->CCMR1 = (TIM2->CCMR1 & ~TIM_CCMR1_OC1M) | TIM_CCMR1_OC1M_2;
         TIM2->CCR1 = 0U;
         TIM2->EGR = TIM_EGR_UG;

@@ -6,6 +6,7 @@
     }
   ],
   "settings": {
-    "stm32cube-ide-clangd.path": "cube"
+    "C_Cpp.intelliSenseEngine": "default",
+    "stm32cube-ide-clangd.enable": false
   }
 }

@@ -140,6 +140,15 @@ void App_Task(uint32_t now_ms)
         status.state = APP_WAIT_START;
         status.auto_start_armed = true;
         reset_start();
+    } else if (status.state == APP_FAULT &&
+               status.error == APP_ERROR_LINE_LOST &&
+               in.line_valid && in.line_start_ready) {
+        /* Recover only a line-loss fault after a stable normal pattern. */
+        Modules_RunStopped();
+        status.state = APP_WAIT_START;
+        status.error = APP_ERROR_NONE;
+        status.auto_start_armed = true;
+        reset_start();
     } else if (status.state == APP_WAIT_START && status.auto_start_armed) {
         if (start_ready(&in, now_ms)) {
             begin_run(in.selected_mode, now_ms);

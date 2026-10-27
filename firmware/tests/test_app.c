@@ -117,11 +117,15 @@ static void test_invalid_and_stop(void)
     step(203);
     assert(App_GetStatus().state == APP_FAULT && drive == APP_DRIVE_STOP);
     input.line_valid = true;
-    for (unsigned now = 204; now <= 504; now += 10) { step(now); }
-    assert(App_GetStatus().state == APP_FAULT && !App_GetStatus().auto_start_armed);
-    input.stop_pressed = input.start_pressed = true;
-    step(505);
-    assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+    step(204);
+    assert(App_GetStatus().state == APP_WAIT_START && App_GetStatus().auto_start_armed);
+    assert(App_GetStatus().error == APP_ERROR_NONE && drive == APP_DRIVE_STOP);
+    for (unsigned now = 214; now <= 414; now += 10) { step(now); }
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+
+    input.stop_pressed = true;
+    step(424);
+    assert(App_GetStatus().state == APP_WAIT_START && !App_GetStatus().auto_start_armed);
 }
 
 static void valid_wait(uint32_t now)
@@ -252,6 +256,9 @@ static void test_parking(void)
     input.sonar_valid = false;
     step(20);
     assert(App_GetStatus().error == APP_ERROR_PARK_SENSOR && drive == APP_DRIVE_STOP);
+    input.sonar_valid = true;
+    step(30);
+    assert(App_GetStatus().state == APP_FAULT);
 }
 
 static void test_wrap_and_display(void)

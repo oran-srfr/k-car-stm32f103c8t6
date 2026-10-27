@@ -54,8 +54,8 @@ automatically re-arms the follower while the motor gate stays closed.
 `control_config.h` contains provisional values copied from the supplied project:
 
 - `Kp = 1.0`, `Kd = 0.0`, correction limit `10.0`
-- base speed `20.0`, maximum forward command `100.0`
-- curve speed `16.0`, sharp-curve speed `12.0`, search speed `8.0`
+- base speed `300.0`, maximum forward command `800.0`
+- curve speed `250.0`, sharp-curve speed `200.0`, search speed `120.0`
 - 30 lost cycles before a fault, 10 cycles for reacquisition
 
 These are software command units between 0 and 1000, not physical speed or a
@@ -96,9 +96,10 @@ the `P` line shows the TIM3 compare values.
 
 - Startup requires a normal black-line pattern continuously for 200 ms; sonar is
   not part of normal line-follow startup or motion control. See
-  [AUTO_START.md](AUTO_START.md).
-  Finished/fault/stopped tasks need explicit re-arming. A/B/C/D position events
-  still have no real source.
+  [AUTO_START.md](AUTO_START.md). A line-loss fault returns to the waiting state
+  after a normal line is restored and must qualify again for 200 ms. Other faults,
+  finished tasks, and manual stops need explicit re-arming. A/B/C/D position
+  events still have no real source.
 - A/B/C/D lap completion is not inferred from line sensors or yaw.
 - Vision, parking trajectories, and encoders are still unimplemented.
 - The TB6612 STBY pin is hardwired high, so firmware cannot provide a physical

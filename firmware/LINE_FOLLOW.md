@@ -77,9 +77,9 @@ left/right semantics to compensate for wiring.
 
 ## Current limits
 
-- The main application still has no start-button source or valid position-event
-  source. It therefore remains in `APP_WAIT_START`; no motor output is enabled
-  merely by powering the board.
+- Startup now requires a normal black-line pattern and safe, fresh sonar data
+  continuously for 200 ms; see [AUTO_START.md](AUTO_START.md). Finished/fault/stopped
+  tasks need explicit re-arming. A/B/C/D position events still have no real source.
 - A/B/C/D lap completion is not inferred from line sensors or yaw.
 - Vision, parking trajectories, and encoders are still unimplemented.
 - The TB6612 STBY pin is hardwired high, so firmware cannot provide a physical

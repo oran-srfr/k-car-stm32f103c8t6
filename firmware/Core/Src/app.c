@@ -6,6 +6,10 @@
 #define OBSTACLE_STOP_MM 80U
 #define OBSTACLE_CLEAR_MM 100U
 #define PARK_TIMEOUT_MS 30000U /* Provisional watchdog; tune during board tests. */
+#define START_MAX_POLL_GAP_MS 50U /* Stale cached readings cannot prove continuity. */
+
+volatile AppControl g_app_control_request = APP_CONTROL_NONE;
+volatile AppMode g_app_selected_mode = APP_MODE_LAPS;
 
 static AppStatus status;
 static uint32_t lap_start_ms;
@@ -14,6 +18,36 @@ static uint32_t display_ms;
 static AppPoint expected_point;
 static bool obstacle_latched;
 static bool departure_sounded;
+static bool start_qualifying;
+static uint32_t start_since_ms;
+static uint32_t start_last_poll_ms;
+static AppMode start_mode;
+
+static void reset_start(void)
+{
+    start_qualifying = false;
+    status.start_stable_ms = 0U;
+}
+
+static bool start_ready(const AppInputs *in, bool sonar_fresh, uint32_t now_ms)
+{
+    if (!in->line_valid || !in->line_start_ready || !sonar_fresh ||
+        in->distance_mm <= OBSTACLE_STOP_MM ||
+        (unsigned)in->selected_mode > APP_MODE_REVERSE_PARK) {
+        reset_start();
+        return false;
+    }
+    if (!start_qualifying || start_mode != in->selected_mode ||
+        (uint32_t)(now_ms - start_last_poll_ms) > START_MAX_POLL_GAP_MS) {
+        start_qualifying = true;
+        start_since_ms = now_ms;
+        start_mode = in->selected_mode;
+    }
+    start_last_poll_ms = now_ms;
+    uint32_t elapsed = now_ms - start_since_ms;
+    status.start_stable_ms = elapsed < APP_AUTO_START_STABLE_MS ? elapsed : APP_AUTO_START_STABLE_MS;
+    return elapsed >= APP_AUTO_START_STABLE_MS;
+}
 
 static void increment(uint16_t *counter)
 {
@@ -25,11 +59,16 @@ static void fail(AppError error)
     Modules_RunStopped();
     status.error = error;
     status.state = APP_FAULT;
+    status.auto_start_armed = false;
+    reset_start();
 }
 
 void App_Init(uint32_t now_ms)
 {
-    status = (AppStatus){ .state = APP_WAIT_START };
+    status = (AppStatus){ .state = APP_WAIT_START, .auto_start_armed = true };
+    reset_start();
+    g_app_control_request = APP_CONTROL_NONE;
+    g_app_selected_mode = APP_MODE_LAPS;
     lap_start_ms = park_start_ms = display_ms = now_ms;
     expected_point = APP_POINT_B;
     obstacle_latched = departure_sounded = false;
@@ -45,6 +84,7 @@ AppStatus App_GetStatus(void)
 static void begin_run(AppMode mode, uint32_t now_ms)
 {
     status = (AppStatus){ .state = APP_FOLLOW_LINE, .mode = mode };
+    reset_start(); /* Armed only once per boot or explicit re-arm. */
     lap_start_ms = now_ms;
     expected_point = APP_POINT_B;
     obstacle_latched = departure_sounded = false;
@@ -87,14 +127,24 @@ void App_Task(uint32_t now_ms)
                        (uint32_t)(now_ms - in.sonar_sample_ms) <= SONAR_MAX_AGE_MS;
     bool active = status.state == APP_FOLLOW_LINE ||
                   status.state == APP_OBSTACLE_HOLD || status.state == APP_PARKING;
+    AppControl request = g_app_control_request;
+    g_app_control_request = APP_CONTROL_NONE;
 
-    /* Stop overrides all progress and start events. Restart requires a new press. */
-    if (in.stop_pressed) {
+    /* Stop wins even if a simultaneous REARM request arrives. */
+    if (in.stop_pressed || request == APP_CONTROL_STOP) {
         Modules_RunStopped();
         status.state = APP_WAIT_START;
-    } else if (!active && in.start_pressed && (unsigned)in.selected_mode <= APP_MODE_REVERSE_PARK &&
-               in.line_valid && sonar_fresh && in.distance_mm > OBSTACLE_STOP_MM) {
-        begin_run(in.selected_mode, now_ms);
+        status.auto_start_armed = false;
+        reset_start();
+    } else if (request == APP_CONTROL_REARM) {
+        Modules_RunStopped();
+        status.state = APP_WAIT_START;
+        status.auto_start_armed = true;
+        reset_start();
+    } else if (status.state == APP_WAIT_START && status.auto_start_armed) {
+        if (start_ready(&in, sonar_fresh, now_ms)) {
+            begin_run(in.selected_mode, now_ms);
+        }
     } else if (active) {
         if (sonar_fresh && in.distance_mm <= OBSTACLE_STOP_MM && !obstacle_latched) {
             obstacle_latched = true;
@@ -126,6 +176,8 @@ void App_Task(uint32_t now_ms)
     }
 
     if (status.state == APP_FINISHED) {
+        status.auto_start_armed = false;
+        reset_start();
         Modules_RunStopped();
     }
 

@@ -38,7 +38,8 @@ volatile float g_tracking_deviation = 0.0f;
 
 static void HMI_Poll(AppInputs *inputs)
 {
-    (void)inputs; /* TODO: start/stop button edges and selected_mode. */
+    inputs->selected_mode = g_app_selected_mode;
+    /* Automatic launch needs no button. Physical stop/mode UI can be added here. */
 }
 
 static void Vision_Poll(AppInputs *inputs)
@@ -78,6 +79,8 @@ static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
         vehicle = VehicleControl_GetOutput();
     }
     inputs->line_valid = vehicle.line_output_valid;
+    inputs->line_start_ready = vehicle.line_output_valid &&
+        vehicle.line_follow.control.track.status == LINE_TRACK_STATUS_NORMAL;
     g_tracking_status = vehicle.line_follow.control.track.status;
     g_tracking_bits = vehicle.line_follow.control.track.black_bits;
     g_tracking_deviation = vehicle.line_follow.control.track.deviation;
@@ -107,8 +110,8 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
 {
     Buzzer_Task(now_ms);
     /* Line validity comes from the four-sensor PD follower. Position events,
-     * HMI input and vision remain placeholders; do not invent them.
-     * TODO HMI: edge-triggered start/stop and mode selection.
+     * physical HMI controls and vision remain placeholders; do not invent them.
+     * HMI mode comes from the debugger until physical controls are wired.
      * TODO position: qualified A/B/C/D waypoint events.
      * TODO vision: parse K230 UART in foreground, validate and deduplicate frames;
      * publish parking_space_event for the selected mode.

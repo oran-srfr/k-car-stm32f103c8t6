@@ -27,12 +27,14 @@ static void step(uint32_t now)
 
 static void begin(AppMode mode, uint32_t now)
 {
-    input = (AppInputs){ .line_valid = true, .sonar_valid = true,
+    input = (AppInputs){ .line_valid = true, .line_start_ready = true, .sonar_valid = true,
                         .distance_mm = 500, .start_pressed = true, .selected_mode = mode };
     for (unsigned i = 0; i < 4; ++i) { sounds[i] = 0; }
-    App_Init(now);
+    App_Init(now - APP_AUTO_START_STABLE_MS);
     assert(drive == APP_DRIVE_STOP);
-    step(now);
+    for (unsigned dt = 0; dt <= APP_AUTO_START_STABLE_MS; dt += 10) {
+        step(now - APP_AUTO_START_STABLE_MS + dt);
+    }
     assert(App_GetStatus().state == APP_FOLLOW_LINE);
 }
 
@@ -62,6 +64,18 @@ static void test_laps(void)
     assert(sounds[APP_SOUND_B] == 2 && sounds[APP_SOUND_C] == 2);
     waypoint(APP_POINT_A, 3000);
     assert(App_GetStatus().laps == 2);
+    for (unsigned now = 3010; now <= 3500; now += 10) { step(now); }
+    assert(App_GetStatus().state == APP_FINISHED && drive == APP_DRIVE_STOP);
+    assert(!App_GetStatus().auto_start_armed);
+    /* Even a legacy button event cannot silently restart a finished task. */
+    input.start_pressed = true;
+    step(3510);
+    assert(App_GetStatus().state == APP_FINISHED);
+    g_app_control_request = APP_CONTROL_REARM;
+    step(3520);
+    assert(drive == APP_DRIVE_STOP && App_GetStatus().auto_start_armed);
+    for (unsigned now = 3530; now <= 3730; now += 10) { step(now); }
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && App_GetStatus().laps == 0);
 }
 
 static void test_obstacle(void)
@@ -101,9 +115,101 @@ static void test_invalid_and_stop(void)
     input.line_valid = false;
     step(203);
     assert(App_GetStatus().state == APP_FAULT && drive == APP_DRIVE_STOP);
+    input.line_valid = true;
+    for (unsigned now = 204; now <= 504; now += 10) { step(now); }
+    assert(App_GetStatus().state == APP_FAULT && !App_GetStatus().auto_start_armed);
     input.stop_pressed = input.start_pressed = true;
-    step(204);
+    step(505);
     assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+}
+
+static void valid_wait(uint32_t now)
+{
+    input = (AppInputs){ .line_valid = true, .line_start_ready = true,
+                        .sonar_valid = true, .distance_mm = 500 };
+    App_Init(now);
+}
+
+static void test_auto_start(void)
+{
+    valid_wait(0);
+    for (unsigned now = 0; now <= 190; now += 10) { step(now); }
+    assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+    step(199);
+    assert(App_GetStatus().start_stable_ms == 199);
+    step(200);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+    assert(!App_GetStatus().auto_start_armed);
+}
+
+static void test_start_resets(void)
+{
+    valid_wait(0);
+    for (unsigned now = 0; now <= 190; now += 10) { step(now); }
+    /* Search/all-black may have valid controller outputs but cannot start. */
+    input.line_start_ready = false;
+    step(200);
+    assert(App_GetStatus().start_stable_ms == 0);
+    input.line_start_ready = true;
+    for (unsigned now = 210; now <= 400; now += 10) { step(now); }
+    assert(drive == APP_DRIVE_STOP);
+    step(410);
+    assert(drive == APP_DRIVE_FOLLOW);
+
+    valid_wait(0);
+    step(0);
+    step(500); /* Long blind gap cannot qualify as stable sensing. */
+    assert(App_GetStatus().start_stable_ms == 0 && drive == APP_DRIVE_STOP);
+    for (unsigned now = 510; now <= 690; now += 10) { step(now); }
+    input.selected_mode = APP_MODE_SIDE_PARK;
+    step(700); /* A mode change also requires a new qualification interval. */
+    assert(App_GetStatus().start_stable_ms == 0 && drive == APP_DRIVE_STOP);
+    for (unsigned now = 710; now <= 900; now += 10) { step(now); }
+    assert(App_GetStatus().mode == APP_MODE_SIDE_PARK && drive == APP_DRIVE_FOLLOW);
+}
+
+static void test_start_obstacle_and_stale(void)
+{
+    valid_wait(0);
+    for (unsigned now = 0; now <= 190; now += 10) { step(now); }
+    input.distance_mm = 80;
+    step(200);
+    assert(App_GetStatus().start_stable_ms == 0 && drive == APP_DRIVE_STOP);
+    input.distance_mm = 500;
+    for (unsigned now = 210; now <= 400; now += 10) { step(now); }
+    input.sonar_valid = false;
+    step(410);
+    assert(App_GetStatus().start_stable_ms == 0 && drive == APP_DRIVE_STOP);
+    input.sonar_valid = true;
+    for (unsigned now = 420; now <= 610; now += 10) { step(now); }
+    input.sonar_sample_ms = 0;
+    App_Task(620); /* Explicitly test an old sample with valid=true. */
+    assert(App_GetStatus().state == APP_WAIT_START && App_GetStatus().start_stable_ms == 0);
+    for (unsigned now = 630; now <= 830; now += 10) { step(now); }
+    assert(drive == APP_DRIVE_FOLLOW);
+}
+
+static void test_stop_rearm_and_wrap(void)
+{
+    valid_wait(UINT32_MAX - 99U);
+    for (unsigned dt = 0; dt <= 200; dt += 10) { step(UINT32_MAX - 99U + dt); }
+    assert(drive == APP_DRIVE_FOLLOW);
+    g_app_control_request = APP_CONTROL_STOP;
+    step(111);
+    for (unsigned now = 121; now <= 411; now += 10) { step(now); }
+    assert(App_GetStatus().state == APP_WAIT_START && !App_GetStatus().auto_start_armed);
+    assert(drive == APP_DRIVE_STOP && g_app_control_request == APP_CONTROL_NONE);
+    input.stop_pressed = true;
+    g_app_control_request = APP_CONTROL_REARM;
+    step(421);
+    assert(!App_GetStatus().auto_start_armed); /* Stop wins. */
+    g_app_control_request = APP_CONTROL_REARM;
+    step(431);
+    assert(App_GetStatus().auto_start_armed && drive == APP_DRIVE_STOP);
+    for (unsigned now = 441; now <= 631; now += 10) { step(now); }
+    assert(drive == APP_DRIVE_STOP);
+    step(641);
+    assert(drive == APP_DRIVE_FOLLOW);
 }
 
 static void park_start(AppMode mode)
@@ -165,6 +271,10 @@ int main(void)
     test_invalid_and_stop();
     test_parking();
     test_wrap_and_display();
-    puts("PASS: 5 application scenario groups");
+    test_auto_start();
+    test_start_resets();
+    test_start_obstacle_and_stale();
+    test_stop_rearm_and_wrap();
+    puts("PASS: 9 application scenario groups");
     return 0;
 }

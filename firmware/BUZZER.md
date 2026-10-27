@@ -51,8 +51,7 @@ Buzzer_Play(BUZZER_POINT_B, HAL_GetTick());
 否则会重复排队。测试其他提示时分别使用 `BUZZER_POINT_C`、`BUZZER_OBSTACLE`、
 `BUZZER_LEAVE_LINE`。`Buzzer_IsReady()` 与 `Buzzer_IsBusy()` 可用于调试。
 
-当前没有有效的发车/循迹输入，默认固件不会凭空产生 B/C 或停车事件，因此上电静音正常。
-本次没有修改循迹与视觉占位接口，也不会自动启动电机。
+当前已有稳定黑线自动发车（见 [AUTO_START.md](AUTO_START.md)）；B/C 位置与停车事件仍待识别层接入，上电静音正常。
 
 ## 验证
 

@@ -4,6 +4,11 @@
   "cmake.cmakePath": "C:/Users/29579/AppData/Local/stm32cube/bundles/cmake/4.4.0+st.1/bin/cmake.exe",
   "cmake.useCMakePresets": "always",
   "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "cmake.automaticReconfigure": false,
+  "cmake.saveBeforeBuild": true,
+  "cmake.exportCompileCommandsFile": true,
+  "cmake.sourceDirectory": "${workspaceFolder}",
   "cmake.environment": {
     "PATH": "C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\cmake\\4.4.0+st.1\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\ninja\\1.13.2+st.1\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\gnu-tools-for-stm32\\14.3.1+st.2\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\programmer\\2.23.0\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\stlink-gdbserver\\7.14.0+st.2\\bin;${env:PATH}"
   },
@@ -11,5 +16,16 @@
     "PATH": "C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\cmake\\4.4.0+st.1\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\ninja\\1.13.2+st.1\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\gnu-tools-for-stm32\\14.3.1+st.2\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\programmer\\2.23.0\\bin;C:\\Users\\29579\\AppData\\Local\\stm32cube\\bundles\\stlink-gdbserver\\7.14.0+st.2\\bin;${env:PATH}"
   },
   "C_Cpp.intelliSenseEngine": "default",
-  "stm32cube-ide-clangd.enable": false
+  "stm32cube-ide-clangd.enable": false,
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "files.associations": {
+    "*.ld": "ld",
+    "*.s": "asm"
+  },
+  "files.watcherExclude": {
+    "**/build/**": true
+  },
+  "search.exclude": {
+    "**/build/**": true
+  }
 }

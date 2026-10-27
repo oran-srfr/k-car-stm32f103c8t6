@@ -1,12 +1,27 @@
 {
   "folders": [
     {
-      "name": "K Car - STM32F103C8T6",
+      "name": "K Car - Firmware (STM32F103C8T6)",
       "path": "firmware"
+    },
+    {
+      "name": "K Car - Project Docs",
+      "path": "."
     }
   ],
   "settings": {
     "C_Cpp.intelliSenseEngine": "default",
-    "stm32cube-ide-clangd.enable": false
+    "stm32cube-ide-clangd.enable": false,
+    "files.associations": {
+      "*.ld": "ld",
+      "*.s": "asm"
+    },
+    "files.watcherExclude": {
+      "**/build/**": true
+    },
+    "search.exclude": {
+      "**/build/**": true
+    },
+    "stm32cube-ide-clangd.path": "cube"
   }
 }

@@ -1,5 +1,7 @@
 {
   "recommendations": [
-    "stmicroelectronics.stm32-vscode-extension"
+    "stmicroelectronics.stm32-vscode-extension",
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools"
   ]
 }

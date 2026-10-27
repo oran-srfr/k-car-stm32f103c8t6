@@ -12,8 +12,10 @@
 - `Ctrl+Shift+B`：编译 Debug，生成 `build/Debug/k_car.elf`、`.hex`、`.bin` 和 `.map`。
 - `F5`：先编译，再通过 ST-Link 下载并停在 `main`。继续运行后暂停，可查看变量。
 - 命令面板 → `Tasks: Run Task` → `STM32: Flash Debug (writes board)`：编译、下载、校验并复位。
+- `STM32: Reconfigure Debug/Release`：按 CMake Presets 重新生成构建目录，不写入板卡。
 - `STM32: List ST-Link probes`：仅枚举下载器。
 - `STM32: Check tools`：检查本机工具版本。
+- `STM32: Host Tests (requires host gcc)`：运行主机单元测试；需要 PATH 中有 MinGW/Windows `gcc`。
 - Release 编译通过任务 `STM32: Build Release` 完成。
 
 命令行也可运行：
@@ -36,7 +38,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 
 已加入比赛任务状态机与模块占位接口，详见 [FRAMEWORK.md](FRAMEWORK.md)。
 HC-SR04 说明见 [ULTRASONIC.md](ULTRASONIC.md)，人机界面与串口姿态链路见
-[HMI_ATTITUDE.md](HMI_ATTITUDE.md)。正常黑线连续满足 200 ms 后自动发车，超声波不参与发车判定，
+[HMI_ATTITUDE.md](HMI_ATTITUDE.md)。正常黑线连续满足 200 ms 后自动发车，普通循迹不依赖超声波，
 详见 [AUTO_START.md](AUTO_START.md)。A/B/C/D 位置识别仍是占位接口；电机参数尚未实车标定。
 保留 PA13/PA14 的 SWD 调试功能。
 

@@ -1,0 +1,23 @@
+{
+  "configurations": [
+    {
+      "name": "STM32F103C8T6",
+      "cStandard": "gnu11",
+      "intelliSenseMode": "windows-gcc-arm",
+      "compilerPath": "C:/Users/29579/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc.exe",
+      "compileCommands": "${workspaceFolder}/firmware/build/Debug/compile_commands.json",
+      "includePath": [
+        "${workspaceFolder}/firmware/Core/Inc",
+        "${workspaceFolder}/firmware/Drivers/CMSIS/Include",
+        "${workspaceFolder}/firmware/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+        "${workspaceFolder}/firmware/Drivers/STM32F1xx_HAL_Driver/Inc",
+        "${workspaceFolder}/firmware/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy"
+      ],
+      "defines": [
+        "STM32F103xB",
+        "USE_HAL_DRIVER"
+      ]
+    }
+  ],
+  "version": 4
+}

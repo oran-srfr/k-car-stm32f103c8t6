@@ -77,9 +77,10 @@ left/right semantics to compensate for wiring.
 
 ## Current limits
 
-- Startup now requires a normal black-line pattern and safe, fresh sonar data
-  continuously for 200 ms; see [AUTO_START.md](AUTO_START.md). Finished/fault/stopped
-  tasks need explicit re-arming. A/B/C/D position events still have no real source.
+- Startup requires a normal black-line pattern continuously for 200 ms; sonar is
+  not part of the start condition. See [AUTO_START.md](AUTO_START.md).
+  Finished/fault/stopped tasks need explicit re-arming. A/B/C/D position events
+  still have no real source.
 - A/B/C/D lap completion is not inferred from line sensors or yaw.
 - Vision, parking trajectories, and encoders are still unimplemented.
 - The TB6612 STBY pin is hardwired high, so firmware cannot provide a physical

@@ -108,9 +108,9 @@ static void test_invalid_and_stop(void)
     step(0);
     assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
     begin(APP_MODE_LAPS, 0);
-    /* A valid flag cannot make an old range measurement safe. */
+    /* Missing or stale range data no longer blocks line following. */
     App_Task(201);
-    assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
     step(202);
     input.line_valid = false;
     step(203);
@@ -125,8 +125,7 @@ static void test_invalid_and_stop(void)
 
 static void valid_wait(uint32_t now)
 {
-    input = (AppInputs){ .line_valid = true, .line_start_ready = true,
-                        .sonar_valid = true, .distance_mm = 500 };
+    input = (AppInputs){ .line_valid = true, .line_start_ready = true };
     App_Init(now);
 }
 
@@ -168,25 +167,29 @@ static void test_start_resets(void)
     assert(App_GetStatus().mode == APP_MODE_SIDE_PARK && drive == APP_DRIVE_FOLLOW);
 }
 
-static void test_start_obstacle_and_stale(void)
+static void test_start_without_sonar(void)
 {
     valid_wait(0);
     for (unsigned now = 0; now <= 190; now += 10) { step(now); }
-    input.distance_mm = 80;
-    step(200);
-    assert(App_GetStatus().start_stable_ms == 0 && drive == APP_DRIVE_STOP);
-    input.distance_mm = 500;
-    for (unsigned now = 210; now <= 400; now += 10) { step(now); }
-    input.sonar_valid = false;
-    step(410);
-    assert(App_GetStatus().start_stable_ms == 0 && drive == APP_DRIVE_STOP);
     input.sonar_valid = true;
-    for (unsigned now = 420; now <= 610; now += 10) { step(now); }
     input.sonar_sample_ms = 0;
-    App_Task(620); /* Explicitly test an old sample with valid=true. */
-    assert(App_GetStatus().state == APP_WAIT_START && App_GetStatus().start_stable_ms == 0);
-    for (unsigned now = 630; now <= 830; now += 10) { step(now); }
-    assert(drive == APP_DRIVE_FOLLOW);
+    input.distance_mm = 500;
+    step(200);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+    step(210);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+
+    input.sonar_valid = false;
+    step(220);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+
+    input.sonar_valid = true;
+    input.distance_mm = 80;
+    step(230);
+    assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
+    input.distance_mm = 101;
+    step(240);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
 }
 
 static void test_stop_rearm_and_wrap(void)
@@ -273,7 +276,7 @@ int main(void)
     test_wrap_and_display();
     test_auto_start();
     test_start_resets();
-    test_start_obstacle_and_stale();
+    test_start_without_sonar();
     test_stop_rearm_and_wrap();
     puts("PASS: 9 application scenario groups");
     return 0;

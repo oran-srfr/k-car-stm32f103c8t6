@@ -89,7 +89,7 @@ RAM:    2616 B / 20 KiB (12.77%)
 
 `firmware/Core/Inc/stm32f1xx_hal_conf.h` 当前启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC、UART 模块。新增 ADC、I2C、硬件 SPI 或 HAL TIM 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
 
-TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，使用 PD 修正和 TIM3 PWM 电机输出；电机门控只在应用进入 `APP_DRIVE_FOLLOW` 时打开。现在正常线型和超声波安全条件连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
+TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，使用 PD 修正和 TIM3 PWM 电机输出；电机门控只在应用进入 `APP_DRIVE_FOLLOW` 时打开。现在正常线型连续满足 200 ms 后自动起步，超声波不参与发车判定；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
 
 工程没有 CubeMX `.ioc`，是手工组织的 CMake 工程。不要用其他板型的 CubeMX 输出直接覆盖现有目录。
 

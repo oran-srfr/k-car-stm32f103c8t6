@@ -36,7 +36,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 
 已加入比赛任务状态机与模块占位接口，详见 [FRAMEWORK.md](FRAMEWORK.md)。
 HC-SR04 说明见 [ULTRASONIC.md](ULTRASONIC.md)，人机界面与串口姿态链路见
-[HMI_ATTITUDE.md](HMI_ATTITUDE.md)。正常黑线与超声波安全条件连续满足 200 ms 后自动发车，
+[HMI_ATTITUDE.md](HMI_ATTITUDE.md)。正常黑线连续满足 200 ms 后自动发车，超声波不参与发车判定，
 详见 [AUTO_START.md](AUTO_START.md)。A/B/C/D 位置识别仍是占位接口；电机参数尚未实车标定。
 保留 PA13/PA14 的 SWD 调试功能。
 

@@ -29,10 +29,9 @@ static void reset_start(void)
     status.start_stable_ms = 0U;
 }
 
-static bool start_ready(const AppInputs *in, bool sonar_fresh, uint32_t now_ms)
+static bool start_ready(const AppInputs *in, uint32_t now_ms)
 {
-    if (!in->line_valid || !in->line_start_ready || !sonar_fresh ||
-        in->distance_mm <= OBSTACLE_STOP_MM ||
+    if (!in->line_valid || !in->line_start_ready ||
         (unsigned)in->selected_mode > APP_MODE_REVERSE_PARK) {
         reset_start();
         return false;
@@ -142,7 +141,7 @@ void App_Task(uint32_t now_ms)
         status.auto_start_armed = true;
         reset_start();
     } else if (status.state == APP_WAIT_START && status.auto_start_armed) {
-        if (start_ready(&in, sonar_fresh, now_ms)) {
+        if (start_ready(&in, now_ms)) {
             begin_run(in.selected_mode, now_ms);
         }
     } else if (active) {
@@ -154,7 +153,7 @@ void App_Task(uint32_t now_ms)
         if (sonar_fresh && in.distance_mm > OBSTACLE_CLEAR_MM) { obstacle_latched = false; }
 
         if (status.state == APP_FOLLOW_LINE || status.state == APP_OBSTACLE_HOLD) {
-            if (!sonar_fresh || obstacle_latched) { status.state = APP_OBSTACLE_HOLD; }
+            if (obstacle_latched) { status.state = APP_OBSTACLE_HOLD; }
             else {
                 status.state = APP_FOLLOW_LINE;
                 follow(&in, now_ms);
@@ -182,9 +181,10 @@ void App_Task(uint32_t now_ms)
     }
 
     AppDrive drive = APP_DRIVE_STOP;
-    if (sonar_fresh && !obstacle_latched) {
-        if (status.state == APP_FOLLOW_LINE) { drive = APP_DRIVE_FOLLOW; }
-        else if (status.state == APP_PARKING) {
+    if (status.state == APP_FOLLOW_LINE && !obstacle_latched) {
+        drive = APP_DRIVE_FOLLOW;
+    } else if (sonar_fresh && !obstacle_latched) {
+        if (status.state == APP_PARKING) {
             drive = status.mode == APP_MODE_SIDE_PARK ? APP_DRIVE_SIDE : APP_DRIVE_REVERSE;
         }
     }

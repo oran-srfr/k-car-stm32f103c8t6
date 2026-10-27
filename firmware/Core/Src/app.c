@@ -145,21 +145,19 @@ void App_Task(uint32_t now_ms)
             begin_run(in.selected_mode, now_ms);
         }
     } else if (active) {
-        if (sonar_fresh && in.distance_mm <= OBSTACLE_STOP_MM && !obstacle_latched) {
-            obstacle_latched = true;
-            increment(&status.obstacles);
-            Modules_Sound(APP_SOUND_OBSTACLE);
-        }
-        if (sonar_fresh && in.distance_mm > OBSTACLE_CLEAR_MM) { obstacle_latched = false; }
-
         if (status.state == APP_FOLLOW_LINE || status.state == APP_OBSTACLE_HOLD) {
-            if (obstacle_latched) { status.state = APP_OBSTACLE_HOLD; }
-            else {
-                status.state = APP_FOLLOW_LINE;
-                follow(&in, now_ms);
-            }
+            status.state = APP_FOLLOW_LINE;
+            follow(&in, now_ms);
         } else if (status.state == APP_PARKING) {
             /* Parking needs its own motion safety model; no blind auto-resume. */
+            if (sonar_fresh && in.distance_mm <= OBSTACLE_STOP_MM && !obstacle_latched) {
+                obstacle_latched = true;
+                increment(&status.obstacles);
+                Modules_Sound(APP_SOUND_OBSTACLE);
+            }
+            if (sonar_fresh && in.distance_mm > OBSTACLE_CLEAR_MM) {
+                obstacle_latched = false;
+            }
             if (!sonar_fresh || obstacle_latched) { fail(APP_ERROR_PARK_SENSOR); }
             else if (in.park_result == APP_PARK_FAILED) { fail(APP_ERROR_PARK_FAILED); }
             else if ((uint32_t)(now_ms - park_start_ms) >= PARK_TIMEOUT_MS) {
@@ -181,7 +179,7 @@ void App_Task(uint32_t now_ms)
     }
 
     AppDrive drive = APP_DRIVE_STOP;
-    if (status.state == APP_FOLLOW_LINE && !obstacle_latched) {
+    if (status.state == APP_FOLLOW_LINE) {
         drive = APP_DRIVE_FOLLOW;
     } else if (sonar_fresh && !obstacle_latched) {
         if (status.state == APP_PARKING) {

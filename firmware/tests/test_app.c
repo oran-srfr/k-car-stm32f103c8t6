@@ -78,27 +78,28 @@ static void test_laps(void)
     assert(App_GetStatus().state == APP_FOLLOW_LINE && App_GetStatus().laps == 0);
 }
 
-static void test_obstacle(void)
+static void test_sonar_ignored_in_line_follow(void)
 {
     begin(APP_MODE_LAPS, 0);
     input.distance_mm = 80;
     step(10);
-    assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
     step(20);
     input.distance_mm = 90;
     step(30);
-    assert(App_GetStatus().obstacles == 1 && sounds[APP_SOUND_OBSTACLE] == 1);
-    assert(drive == APP_DRIVE_STOP);
+    assert(App_GetStatus().obstacles == 0 && sounds[APP_SOUND_OBSTACLE] == 0);
+    assert(drive == APP_DRIVE_FOLLOW);
     input.sonar_valid = false;
     step(40);
-    assert(drive == APP_DRIVE_STOP);
+    assert(drive == APP_DRIVE_FOLLOW);
     input.sonar_valid = true;
     input.distance_mm = 101;
     step(50);
     assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
     input.distance_mm = 70;
     step(60);
-    assert(App_GetStatus().obstacles == 2);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
+    assert(App_GetStatus().obstacles == 0);
 }
 
 static void test_invalid_and_stop(void)
@@ -186,7 +187,7 @@ static void test_start_without_sonar(void)
     input.sonar_valid = true;
     input.distance_mm = 80;
     step(230);
-    assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
+    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
     input.distance_mm = 101;
     step(240);
     assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
@@ -270,7 +271,7 @@ static void test_wrap_and_display(void)
 int main(void)
 {
     test_laps();
-    test_obstacle();
+    test_sonar_ignored_in_line_follow();
     test_invalid_and_stop();
     test_parking();
     test_wrap_and_display();

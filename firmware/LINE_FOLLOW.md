@@ -75,10 +75,28 @@ left/right semantics to compensate for wiring.
 - `g_left_applied_command`, `g_right_applied_command`
 - `g_motor_driver_left_pwm_compare`, `g_motor_driver_right_pwm_compare`
 
+The TFT's bottom three ASCII lines also show the same key state without a
+computer connection:
+
+```text
+S1E0 L0 B02 O1D1
+A0016/0016
+P0057/0057
+```
+
+`S` is the application state (`0` wait, `1` follow, `2` obstacle hold, `3`
+parking, `4` finished, `5` fault), and `E` is the latched application error
+(`0` none, `1` line lost, `2` parking failed, `3` parking timeout, `4` parking
+sensor). `L` is the line status (`0` normal, `1` lost, `2` all black), `B` is
+the four-sensor bitmap, `O` is the application motor gate and `D` is the
+motor-driver enable. The `A` line shows the applied left/right commands and
+the `P` line shows the TIM3 compare values.
+
 ## Current limits
 
 - Startup requires a normal black-line pattern continuously for 200 ms; sonar is
-  not part of the start condition. See [AUTO_START.md](AUTO_START.md).
+  not part of normal line-follow startup or motion control. See
+  [AUTO_START.md](AUTO_START.md).
   Finished/fault/stopped tasks need explicit re-arming. A/B/C/D position events
   still have no real source.
 - A/B/C/D lap completion is not inferred from line sensors or yaw.

@@ -69,5 +69,5 @@ build/host/test_ultrasonic
 确认 PA4 脉冲、PA5 电平和 Echo 脉宽，再用 8 cm、10 cm、50 cm、100 cm 平面目标验证。
 检查遮挡、断开 Echo、无目标时无效状态与停车逻辑。当前未连接板卡，未执行这些实测。
 
-当前超声波不参与稳定黑线自动发车；运行中收到有效近距数据仍会触发障碍停车，
-详见 [AUTO_START.md](AUTO_START.md)。
+当前超声波不参与普通循迹模式的发车或运行控制，只在侧方停车、倒车入库模式中
+参与安全检查，详见 [AUTO_START.md](AUTO_START.md)。

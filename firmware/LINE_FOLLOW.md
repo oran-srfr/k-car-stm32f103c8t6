@@ -54,17 +54,18 @@ automatically re-arms the follower while the motor gate stays closed.
 `control_config.h` contains provisional values copied from the supplied project:
 
 - `Kp = 1.0`, `Kd = 0.0`, correction limit `10.0`
-- start boost `800` for `50` control cycles (about 500 ms)
-- base speed `500.0`, maximum forward command `1000.0`
-- curve speed `500.0`, sharp-curve speed `400.0`, search speed `300.0`
-- search inner-wheel command `-100.0`; reverse the search direction every
+- no separate startup boost
+- base, curve, sharp-curve and search outer-wheel command `800.0`; maximum
+  forward command `1000.0`
+- search inner-wheel command `-800.0`; reverse the search direction every
   20 cycles
 - 100 lost cycles before a fault, 10 cycles for reacquisition
 - up to 10 all-black cycles (about 100 ms) to cross a transverse line
 
 These are software command units between 0 and 1000, not physical speed or a
-calibrated PWM percentage. The defaults are not validated on the assembled car
-and are likely too low for final operation. Tune them only with the wheels raised
+calibrated PWM percentage. The common `800` setting is intended to keep both
+motors above the low-speed dead zone. PD correction still produces the small
+left/right difference needed for steering. Tune only with the wheels raised
 first, then on a test track.
 
 The reference project's direct motor-on-sensor-pattern logic is intentionally

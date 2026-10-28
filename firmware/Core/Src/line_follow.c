@@ -11,6 +11,7 @@ static int8_t s_last_valid_direction = 0;
 static uint8_t s_has_valid_history = 0U;
 static uint16_t s_lost_cycles = 0U;
 static uint16_t s_reacquire_cycles = 0U;
+static uint16_t s_cross_cycles = 0U;
 static float s_previous_base_speed = 0.0f;
 static float s_previous_left_command = 0.0f;
 static float s_previous_right_command = 0.0f;
@@ -28,6 +29,7 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_has_valid_history = 0U;
   s_lost_cycles = 0U;
   s_reacquire_cycles = 0U;
+  s_cross_cycles = 0U;
   s_previous_base_speed = 0.0f;
   s_previous_left_command = 0.0f;
   s_previous_right_command = 0.0f;
@@ -56,9 +58,9 @@ static uint8_t LineFollow_ConfigIsValid(const MotorCommandConfig_t *motor_config
       !isfinite(follow_config->curve_speed) ||
       !isfinite(follow_config->sharp_curve_speed) ||
       !isfinite(follow_config->search_speed) ||
+      !isfinite(follow_config->search_inner_speed) ||
       !isfinite(follow_config->straight_max_deviation) ||
-      !isfinite(follow_config->curve_max_deviation) ||
-      !isfinite(follow_config->search_turn_correction))
+      !isfinite(follow_config->curve_max_deviation))
   {
     return 0U;
   }
@@ -70,7 +72,7 @@ static uint8_t LineFollow_ConfigIsValid(const MotorCommandConfig_t *motor_config
       (follow_config->search_speed < 0.0f) ||
       (follow_config->straight_max_deviation < 0.0f) ||
       (follow_config->curve_max_deviation < follow_config->straight_max_deviation) ||
-      (follow_config->search_turn_correction < 0.0f))
+      (follow_config->search_reverse_cycles == 0U))
   {
     return 0U;
   }
@@ -108,6 +110,42 @@ static MotorCommandResult_t LineFollow_MakeCommand(float base_speed,
                                 &command_config);
 }
 
+static float LineFollow_ClampCommand(float command, float maximum)
+{
+  if (command > maximum)
+  {
+    return maximum;
+  }
+  if (command < -maximum)
+  {
+    return -maximum;
+  }
+  return command;
+}
+
+static void LineFollow_MakeSearchCommand(float outer_speed,
+                                         float inner_speed,
+                                         int8_t direction,
+                                         const MotorCommandConfig_t *motor_config,
+                                         LineFollowResult_t *result)
+{
+  if (direction < 0)
+  {
+    result->left_command = LineFollow_ClampCommand(inner_speed,
+                                                    motor_config->max_forward_command);
+    result->right_command = LineFollow_ClampCommand(outer_speed,
+                                                     motor_config->max_forward_command);
+  }
+  else
+  {
+    result->left_command = LineFollow_ClampCommand(outer_speed,
+                                                    motor_config->max_forward_command);
+    result->right_command = LineFollow_ClampCommand(inner_speed,
+                                                     motor_config->max_forward_command);
+  }
+  result->base_speed = outer_speed;
+}
+
 static void LineFollow_SetFault(LineFollowFault_t fault,
                                 LineFollowResult_t *result)
 {
@@ -124,17 +162,13 @@ static void LineFollow_UpdateLastDeviation(float deviation)
   s_last_valid_deviation = deviation;
   s_has_valid_history = 1U;
 
-  if (deviation < 0.0f)
+  if (deviation < -0.5f)
   {
     s_last_valid_direction = -1;
   }
-  else if (deviation > 0.0f)
+  else if (deviation > 0.5f)
   {
     s_last_valid_direction = 1;
-  }
-  else
-  {
-    s_last_valid_direction = 0;
   }
 }
 
@@ -142,8 +176,8 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
                                   const LineFollowConfig_t *follow_config,
                                   LineFollowResult_t *result)
 {
-  MotorCommandResult_t motor;
-  float search_correction;
+  int8_t search_direction;
+  uint16_t search_phase;
 
   if (s_has_valid_history == 0U)
   {
@@ -165,14 +199,18 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_state = (s_lost_cycles == 1U) ? LINE_FOLLOW_LINE_LOST
                                   : LINE_FOLLOW_SEARCHING;
   s_reacquire_cycles = 0U;
-  result->base_speed = follow_config->search_speed;
-  search_correction = follow_config->search_turn_correction *
-                      (float)s_last_valid_direction;
-  motor = LineFollow_MakeCommand(result->base_speed,
-                                 search_correction,
-                                 motor_config);
-  result->left_command = motor.left_command;
-  result->right_command = motor.right_command;
+  search_direction = (s_last_valid_direction != 0) ? s_last_valid_direction : 1;
+  search_phase = (uint16_t)((s_lost_cycles - 1U) /
+                            follow_config->search_reverse_cycles);
+  if ((search_phase & 1U) != 0U)
+  {
+    search_direction = (int8_t)-search_direction;
+  }
+  LineFollow_MakeSearchCommand(follow_config->search_speed,
+                               follow_config->search_inner_speed,
+                               search_direction,
+                               motor_config,
+                               result);
 }
 
 static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
@@ -201,6 +239,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   }
 
   s_lost_cycles = 0U;
+  s_cross_cycles = 0U;
   LineFollow_UpdateLastDeviation(result->control.track.deviation);
 
   if (s_state != LINE_FOLLOW_REACQUIRE)
@@ -244,6 +283,29 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   }
 }
 
+static void LineFollow_HandleCrossing(const MotorCommandConfig_t *motor_config,
+                                      const LineFollowConfig_t *follow_config,
+                                      LineFollowResult_t *result)
+{
+  MotorCommandResult_t motor;
+
+  if (s_cross_cycles < UINT16_MAX)
+  {
+    ++s_cross_cycles;
+  }
+  if (s_cross_cycles > follow_config->max_cross_cycles)
+  {
+    LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, result);
+    return;
+  }
+
+  s_state = LINE_FOLLOW_CROSSING;
+  motor = LineFollow_MakeCommand(motor_config->base_speed, 0.0f, motor_config);
+  result->base_speed = motor_config->base_speed;
+  result->left_command = motor.left_command;
+  result->right_command = motor.right_command;
+}
+
 /** 初始化后保持停止，防止复位后产生非零命令。 */
 void LineFollow_Init(void)
 {
@@ -267,9 +329,24 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
                                      const MotorCommandConfig_t *motor_config,
                                      const LineFollowConfig_t *follow_config)
 {
+  LineControlResult_t control = LineControl_Sample(pd_config);
+
+  return LineFollow_UpdateWithControl(&control, motor_config, follow_config);
+}
+
+LineFollowResult_t LineFollow_UpdateWithControl(const LineControlResult_t *control,
+                                                const MotorCommandConfig_t *motor_config,
+                                                const LineFollowConfig_t *follow_config)
+{
   LineFollowResult_t result;
 
-  result.control = LineControl_Sample(pd_config);
+  result.control = (control != NULL) ? *control : (LineControlResult_t){0};
+  if (control == NULL)
+  {
+    result.control.track.status = LINE_TRACK_STATUS_LOST;
+    result.control.pd.status = LINE_TRACK_STATUS_LOST;
+    result.control.control_status = LINE_CONTROL_STATUS_INVALID_INPUT_STOP;
+  }
   result.base_speed = 0.0f;
   result.left_command = 0.0f;
   result.right_command = 0.0f;
@@ -284,7 +361,14 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
   }
   else if (result.control.track.status == LINE_TRACK_STATUS_ALL_BLACK)
   {
-    LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, &result);
+    if (LineFollow_ConfigIsValid(motor_config, follow_config) == 0U)
+    {
+      LineFollow_SetFault(LINE_FOLLOW_FAULT_INVALID_INPUT, &result);
+    }
+    else
+    {
+      LineFollow_HandleCrossing(motor_config, follow_config, &result);
+    }
   }
   else if ((LineFollow_ConfigIsValid(motor_config, follow_config) == 0U) ||
            (result.control.control_status == LINE_CONTROL_STATUS_INVALID_INPUT_STOP))

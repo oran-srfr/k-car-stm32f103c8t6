@@ -12,6 +12,8 @@
 #include "vehicle_control.h"
 #include "stm32f1xx_hal.h"
 
+#define MODULE_DEBUG_SCREEN 1U
+
 static PDControllerConfig_t s_pd_config = {
     CONTROL_KP_DEFAULT,
     CONTROL_KD_DEFAULT,
@@ -22,14 +24,16 @@ static MotorCommandConfig_t s_motor_command_config = {
     CONTROL_MAX_FORWARD_COMMAND_DEFAULT
 };
 static LineFollowConfig_t s_line_follow_config = {
-    LINE_FOLLOW_CURVE_SPEED_DEFAULT,
-    LINE_FOLLOW_SHARP_CURVE_SPEED_DEFAULT,
-    LINE_FOLLOW_SEARCH_SPEED_DEFAULT,
-    LINE_FOLLOW_STRAIGHT_MAX_DEVIATION_DEFAULT,
-    LINE_FOLLOW_CURVE_MAX_DEVIATION_DEFAULT,
-    LINE_FOLLOW_SEARCH_CORRECTION_DEFAULT,
-    LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT,
-    LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
+    .curve_speed = LINE_FOLLOW_CURVE_SPEED_DEFAULT,
+    .sharp_curve_speed = LINE_FOLLOW_SHARP_CURVE_SPEED_DEFAULT,
+    .search_speed = LINE_FOLLOW_SEARCH_SPEED_DEFAULT,
+    .search_inner_speed = LINE_FOLLOW_SEARCH_INNER_SPEED_DEFAULT,
+    .straight_max_deviation = LINE_FOLLOW_STRAIGHT_MAX_DEVIATION_DEFAULT,
+    .curve_max_deviation = LINE_FOLLOW_CURVE_MAX_DEVIATION_DEFAULT,
+    .max_lost_cycles = LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT,
+    .search_reverse_cycles = LINE_FOLLOW_SEARCH_REVERSE_CYCLES_DEFAULT,
+    .max_cross_cycles = LINE_FOLLOW_MAX_CROSS_CYCLES_DEFAULT,
+    .reacquire_cycles = LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
 };
 static uint32_t s_last_control_ms;
 static char s_debug_line[3][17];
@@ -263,21 +267,21 @@ static void Debug_Display(const AppStatus *status)
     DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
     DebugLine_Append(line, "D");
     DebugLine_AppendU16(line, g_motor_driver_enabled ? 1U : 0U, 1U);
-    DebugLine_Show(112U, 0U, line, WHITE);
+    DebugLine_Show(2U, 0U, line, WHITE);
 
     DebugLine_Clear(line);
     DebugLine_Append(line, "A");
     DebugLine_AppendU16(line, (uint16_t)g_motor_driver_left_actual, 4U);
     DebugLine_Append(line, "/");
     DebugLine_AppendU16(line, (uint16_t)g_motor_driver_right_actual, 4U);
-    DebugLine_Show(128U, 1U, line, GREEN);
+    DebugLine_Show(22U, 1U, line, GREEN);
 
     DebugLine_Clear(line);
     DebugLine_Append(line, "P");
     DebugLine_AppendU16(line, (uint16_t)g_motor_driver_left_pwm_compare, 4U);
     DebugLine_Append(line, "/");
     DebugLine_AppendU16(line, (uint16_t)g_motor_driver_right_pwm_compare, 4U);
-    DebugLine_Show(144U, 2U, line, YELLOW);
+    DebugLine_Show(46U, 2U, line, YELLOW);
 }
 
 void Modules_Display(const AppStatus *status)
@@ -290,6 +294,10 @@ void Modules_Display(const AppStatus *status)
     HCI_ObsCount = status->obstacles;
     HCI_RevCount = status->reverse_spaces;
     HCI_SideCount = status->side_spaces;
+#if MODULE_DEBUG_SCREEN
+    Debug_Display(status);
+#else
     HCI_Update();
     Debug_Display(status);
+#endif
 }

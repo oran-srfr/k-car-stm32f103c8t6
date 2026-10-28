@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stddef.h>
 
+#include "control_config.h"
 #include "motor_driver.h"
 
 volatile bool g_tracking_started = false;
@@ -18,13 +19,15 @@ static const PDControllerConfig_t *s_pd_config = NULL;
 static const MotorCommandConfig_t *s_motor_config = NULL;
 static const LineFollowConfig_t *s_follow_config = NULL;
 static VehicleControlOutput_t s_latest_output;
+static uint16_t s_start_boost_cycles;
 
 static bool VehicleControl_StateAllowsMotion(LineFollowState_t state)
 {
   return (state == LINE_FOLLOW_TRACKING) ||
          (state == LINE_FOLLOW_LINE_LOST) ||
          (state == LINE_FOLLOW_SEARCHING) ||
-         (state == LINE_FOLLOW_REACQUIRE);
+         (state == LINE_FOLLOW_REACQUIRE) ||
+         (state == LINE_FOLLOW_CROSSING);
 }
 
 static bool VehicleControl_CommandIsValid(float command)
@@ -47,6 +50,7 @@ static void VehicleControl_DisableMotor(void)
   MotorDriver_Disable();
   g_left_applied_command = 0;
   g_right_applied_command = 0;
+  s_start_boost_cycles = 0U;
 }
 
 static void VehicleControl_SaveOutput(const LineFollowResult_t *follow,
@@ -162,6 +166,32 @@ void VehicleControl_Update(void)
   if (g_motor_driver_enabled == 0U)
   {
     MotorDriver_Enable();
+    s_start_boost_cycles = CONTROL_START_BOOST_CYCLES_DEFAULT;
+  }
+  if (s_start_boost_cycles > 0U)
+  {
+    /* The differential search command may run one wheel backwards; do not
+     * translate both wheels by a boost intended only for forward launch. */
+    if ((left_command >= 0) && (right_command >= 0))
+    {
+      int16_t lower_command = (left_command < right_command) ? left_command : right_command;
+      int16_t higher_command = (left_command > right_command) ? left_command : right_command;
+      int16_t boost_command = (int16_t)CONTROL_START_BOOST_COMMAND_DEFAULT;
+      int16_t headroom = (int16_t)(MOTOR_DRIVER_COMMAND_MAX - higher_command);
+      int16_t delta;
+
+      if ((lower_command < boost_command) && (headroom > 0))
+      {
+        delta = (int16_t)(boost_command - lower_command);
+        if (delta > headroom)
+        {
+          delta = headroom;
+        }
+        left_command = (int16_t)(left_command + delta);
+        right_command = (int16_t)(right_command + delta);
+      }
+    }
+    --s_start_boost_cycles;
   }
   MotorDriver_SetBoth(left_command, right_command);
   g_left_applied_command = g_motor_driver_left_actual;

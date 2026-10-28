@@ -54,14 +54,34 @@ automatically re-arms the follower while the motor gate stays closed.
 `control_config.h` contains provisional values copied from the supplied project:
 
 - `Kp = 1.0`, `Kd = 0.0`, correction limit `10.0`
-- base speed `300.0`, maximum forward command `800.0`
-- curve speed `250.0`, sharp-curve speed `200.0`, search speed `120.0`
-- 30 lost cycles before a fault, 10 cycles for reacquisition
+- start boost `800` for `50` control cycles (about 500 ms)
+- base speed `500.0`, maximum forward command `1000.0`
+- curve speed `500.0`, sharp-curve speed `400.0`, search speed `300.0`
+- search inner-wheel command `-100.0`; reverse the search direction every
+  20 cycles
+- 100 lost cycles before a fault, 10 cycles for reacquisition
+- up to 10 all-black cycles (about 100 ms) to cross a transverse line
 
 These are software command units between 0 and 1000, not physical speed or a
 calibrated PWM percentage. The defaults are not validated on the assembled car
 and are likely too low for final operation. Tune them only with the wheels raised
 first, then on a test track.
+
+The reference project's direct motor-on-sensor-pattern logic is intentionally
+not copied verbatim. It uses a different seven-sensor pinout and blocks in
+`Delay_ms()` while turning. This project keeps the nonblocking 10 ms control
+loop, but borrows its useful recovery behavior: a strong turn follows the last
+observed side, a lost line is searched by pivoting rather than driving almost
+straight, and a transverse/all-black pattern is crossed briefly instead of
+being treated as an immediate fault.
+
+All-black means that every sensor sees the line. A cross/start line is allowed
+for at most `LINE_FOLLOW_MAX_CROSS_CYCLES_DEFAULT`; a permanently dark surface
+still latches `LINE_FOLLOW_FAULT_ALL_BLACK`. When the normal pattern returns,
+normal tracking resumes immediately. During line loss, the outer wheel runs at
+`search_speed`, the inner wheel runs at signed `search_inner_speed`, and the
+direction alternates every `search_reverse_cycles`. This sweep is bounded by
+`max_lost_cycles`, so the car cannot search indefinitely without supervision.
 
 `MOTOR_DRIVER_LEFT_REVERSED` and `MOTOR_DRIVER_RIGHT_REVERSED` in
 `motor_driver.h` must be used to correct motor polarity. Do not swap application
@@ -75,8 +95,8 @@ left/right semantics to compensate for wiring.
 - `g_left_applied_command`, `g_right_applied_command`
 - `g_motor_driver_left_pwm_compare`, `g_motor_driver_right_pwm_compare`
 
-The TFT's bottom three ASCII lines also show the same key state without a
-computer connection:
+While `MODULE_DEBUG_SCREEN` is enabled, the TFT's top three ASCII lines show
+the key state without a computer connection:
 
 ```text
 S1E0 L0 B02 O1D1
@@ -110,5 +130,6 @@ the `P` line shows the TIM3 compare values.
 ## Verification
 
 The Debug and Release firmware builds compile the full line-follow and motor
-stack. `tests/test_tracking.c` covers sensor geometry, PD behavior, and motor
-command mixing. Run `tests/run_tests.ps1` when a host `gcc` is available.
+stack. `tests/test_tracking.c` covers sensor geometry, PD behavior, motor command
+mixing, directional loss recovery, search reversal, and bounded all-black
+crossing. Run `tests/run_tests.ps1` when a host `gcc` is available.

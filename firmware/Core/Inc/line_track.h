@@ -8,7 +8,8 @@
 #define LINE_SENSOR_BLACK_ACTIVE_LOW 1U
 #endif
 
-/* Raw bit numbers X1=0, X2=1, X3=2, X4=3. Change only after measuring
+/* Confirmed SWn->Xn; probes left-to-right SW2, SW1, SW3, SW4.
+ * Raw bit numbers X1=0, X2=1, X3=2, X4=3. Change only after measuring
  * the physical order with the car facing forward. Never invert PD to hide it. */
 #ifndef LINE_SENSOR_LEFT_OUTER_BIT
 #define LINE_SENSOR_LEFT_OUTER_BIT  1U

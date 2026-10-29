@@ -121,6 +121,9 @@ static void test_invalid_and_stop(void)
     assert(App_GetStatus().error == APP_ERROR_NONE);
     assert(App_GetStatus().auto_start_armed);
     for (unsigned now = 214; now <= 404; now += 10) { step(now); }
+    /* Rearm happens at 204; the first start sample is 214. 404 is only 190 ms. */
+    assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+    step(414);
     assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
 }
 

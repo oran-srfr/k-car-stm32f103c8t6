@@ -89,7 +89,7 @@ RAM:    2616 B / 20 KiB (12.77%)
 
 `firmware/Core/Inc/stm32f1xx_hal_conf.h` 当前启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC、UART 模块。新增 ADC、I2C、硬件 SPI 或 HAL TIM 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
 
-TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，实车探头从左到右 SW2、SW1、SW3、SW4（接线口排列不是探头顺序）。当前生产控制使用 5 ms 四路硬状态机：单个内侧灯点亮时停止另一侧车轮，外侧灯点亮时停止同侧车轮并让另一侧以 80% 前进；滤波 PD 保留为可编译回退模式。正常线型连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
+TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，实车探头从左到右 SW2、SW1、SW3、SW4（接线口排列不是探头顺序）。当前生产控制使用 1 ms 四路硬状态机：内侧使用 600/700 差速，外侧使用 500/700，四灯全灭先慢速直行再差速搜索；滤波 PD 保留为可编译回退模式。正常线型连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
 
 工程没有 CubeMX `.ioc`，是手工组织的 CMake 工程。不要用其他板型的 CubeMX 输出直接覆盖现有目录。
 

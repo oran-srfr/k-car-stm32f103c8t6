@@ -119,6 +119,7 @@ static float LineFollow_SelectBaseSpeed(float deviation,
 }
 #endif
 
+#if !LINE_FOLLOW_DISCRETE_MODE
 static MotorCommandResult_t LineFollow_MakeCommand(float base_speed,
                                                     float correction,
                                                     bool hard_turn,
@@ -141,6 +142,7 @@ static MotorCommandResult_t LineFollow_MakeCommand(float base_speed,
                                 correction,
                                 &command_config);
 }
+#endif
 
 #if !LINE_FOLLOW_DISCRETE_MODE
 static bool LineFollow_ShouldUseHardTurn(float deviation)
@@ -200,14 +202,18 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
                                   const LineFollowConfig_t *follow_config,
                                   LineFollowResult_t *result)
 {
+#if !LINE_FOLLOW_DISCRETE_MODE
   MotorCommandResult_t motor;
   float search_correction;
+#endif
 
+#if !LINE_FOLLOW_DISCRETE_MODE
   if (s_has_valid_history == 0U)
   {
     LineFollow_SetFault(LINE_FOLLOW_FAULT_NO_VALID_HISTORY, result);
     return;
   }
+#endif
 
   if (s_lost_cycles < UINT16_MAX)
   {
@@ -223,6 +229,23 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_state = (s_lost_cycles == 1U) ? LINE_FOLLOW_LINE_LOST
                                   : LINE_FOLLOW_SEARCHING;
   s_reacquire_cycles = 0U;
+#if LINE_FOLLOW_DISCRETE_MODE
+  {
+    int8_t direction = (s_last_valid_direction != 0) ?
+                       s_last_valid_direction : 1;
+    float fast = motor_config->max_forward_command;
+
+    result->base_speed = follow_config->search_speed;
+    if (s_lost_cycles <= LINE_FOLLOW_ALL_OFF_SLOW_CYCLES) {
+      result->left_command = motor_config->min_forward_command;
+      result->right_command = motor_config->min_forward_command;
+    } else {
+      float slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
+      result->left_command = (direction < 0) ? slow : fast;
+      result->right_command = (direction < 0) ? fast : slow;
+    }
+  }
+#else
 #if !LINE_FOLLOW_DISCRETE_MODE
   s_error_direction = 0;
   s_error_direction_cycles = 0U;
@@ -236,6 +259,7 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
                                  motor_config);
   result->left_command = motor.left_command;
   result->right_command = motor.right_command;
+#endif
 }
 
 static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
@@ -249,6 +273,8 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
   bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
   float fast = motor_config->max_forward_command;
+  float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
+  float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
   float straight = motor_config->base_speed;
 
   (void)follow_config;
@@ -260,31 +286,31 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   s_curve_hold_cycles = 0U;
 
   if (left_outer || right_outer) {
-    /* Outer probe wins. Stop the lit side; keep driving toward the line. */
+    /* Outer probe wins: use a larger two-wheel differential, never zero. */
     if (left_outer && right_outer) {
-      result->left_command = 0.0f;
-      result->right_command = 0.0f;
+      result->left_command = inner_slow;
+      result->right_command = inner_slow;
     } else if (left_outer) {
-      result->left_command = 0.0f;
+      result->left_command = outer_slow;
       result->right_command = fast;
     } else {
       result->left_command = fast;
-      result->right_command = 0.0f;
+      result->right_command = outer_slow;
     }
   } else if (left_inner && right_inner) {
     result->left_command = straight;
     result->right_command = straight;
   } else if (left_inner) {
-    /* Left inner still on: stop the opposite (right) motor. */
-    result->left_command = fast;
-    result->right_command = 0.0f;
-  } else if (right_inner) {
-    /* Right inner still on: stop the opposite (left) motor. */
-    result->left_command = 0.0f;
+    /* Line on the left: left wheel slower, right wheel faster. */
+    result->left_command = inner_slow;
     result->right_command = fast;
+  } else if (right_inner) {
+    /* Line on the right: left wheel faster, right wheel slower. */
+    result->left_command = fast;
+    result->right_command = inner_slow;
   } else {
-    result->left_command = 0.0f;
-    result->right_command = 0.0f;
+    result->left_command = inner_slow;
+    result->right_command = inner_slow;
   }
 
   result->base_speed = 0.5f * (result->left_command + result->right_command);

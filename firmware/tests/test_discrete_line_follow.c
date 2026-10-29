@@ -76,23 +76,24 @@ static void expect(uint8_t black, float left, float right)
 
 int main(void)
 {
-    const float fast = CONTROL_MAX_FORWARD_COMMAND_DEFAULT;
+    const float inner_fast = LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT;
     const float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
+    const float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
     const float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
     const float straight = CONTROL_BASE_SPEED_DEFAULT;
 
     LineFollow_Start();
     expect(CENTER, straight, straight);
-    expect(LEFT_INNER, inner_slow, fast);
+    expect(LEFT_INNER, inner_slow, inner_fast);
     expect(CENTER, straight, straight);
-    expect(RIGHT_INNER, fast, inner_slow);
+    expect(RIGHT_INNER, inner_fast, inner_slow);
     expect(CENTER, straight, straight);
 
-    expect(LEFT_OUTER, outer_slow, fast);
-    expect(LEFT_OUTER | RIGHT_INNER, outer_slow, fast);
-    expect(LEFT_INNER, inner_slow, fast);
-    expect(RIGHT_OUTER, fast, outer_slow);
-    expect(RIGHT_OUTER | LEFT_INNER, fast, outer_slow);
+    expect(LEFT_OUTER, outer_slow, outer_fast);
+    expect(LEFT_OUTER | RIGHT_INNER, outer_slow, outer_fast);
+    expect(LEFT_INNER, inner_slow, inner_fast);
+    expect(RIGHT_OUTER, outer_fast, outer_slow);
+    expect(RIGHT_OUTER | LEFT_INNER, outer_fast, outer_slow);
     expect(CENTER, straight, straight);
 
     expect(LEFT_OUTER | RIGHT_OUTER, inner_slow, inner_slow);
@@ -106,7 +107,8 @@ int main(void)
     }
     assert(lost.fault == LINE_FOLLOW_FAULT_NONE);
     assert(lost.left_command > 0.0f && lost.right_command > 0.0f);
-    assert(fabsf(lost.left_command - lost.right_command) == fast - outer_slow);
+    assert(fabsf(lost.left_command - lost.right_command) ==
+           outer_fast - outer_slow);
     puts("PASS: direct sensor direction and two-wheel differential");
     return 0;
 }

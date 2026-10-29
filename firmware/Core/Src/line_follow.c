@@ -233,7 +233,7 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   {
     int8_t direction = (s_last_valid_direction != 0) ?
                        s_last_valid_direction : 1;
-    float fast = motor_config->max_forward_command;
+    float fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
 
     result->base_speed = follow_config->search_speed;
     if (s_lost_cycles <= LINE_FOLLOW_ALL_OFF_SLOW_CYCLES) {
@@ -272,8 +272,9 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   bool left_inner = (bits & SENSOR_LEFT_INNER_MASK) != 0U;
   bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
   bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
-  float fast = motor_config->max_forward_command;
+  float inner_fast = LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT;
   float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
+  float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
   float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
   float straight = motor_config->base_speed;
 
@@ -292,9 +293,9 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
       result->right_command = inner_slow;
     } else if (left_outer) {
       result->left_command = outer_slow;
-      result->right_command = fast;
+      result->right_command = outer_fast;
     } else {
-      result->left_command = fast;
+      result->left_command = outer_fast;
       result->right_command = outer_slow;
     }
   } else if (left_inner && right_inner) {
@@ -303,10 +304,10 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   } else if (left_inner) {
     /* Line on the left: left wheel slower, right wheel faster. */
     result->left_command = inner_slow;
-    result->right_command = fast;
+    result->right_command = inner_fast;
   } else if (right_inner) {
     /* Line on the right: left wheel faster, right wheel slower. */
-    result->left_command = fast;
+    result->left_command = inner_fast;
     result->right_command = inner_slow;
   } else {
     result->left_command = inner_slow;

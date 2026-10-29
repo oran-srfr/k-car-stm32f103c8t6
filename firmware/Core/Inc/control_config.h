@@ -2,10 +2,10 @@
 #define CONTROL_CONFIG_H
 
 /* 控制参数默认值集中在这里，运行时仍可通过 Watch 修改对应配置变量。 */
-#define CONTROL_PERIOD_MS                    (10U)
+#define CONTROL_PERIOD_MS                    (5U)
 #define CONTROL_PERIOD_SECONDS               ((float)CONTROL_PERIOD_MS / 1000.0f)
-#define CONTROL_KP_DEFAULT                   (40.0f)
-#define CONTROL_KD_DEFAULT                   (0.2f)
+#define CONTROL_KP_DEFAULT                   (80.0f)
+#define CONTROL_KD_DEFAULT                   (0.3f)
 #define CONTROL_PD_OUTPUT_LIMIT_DEFAULT      (120.0f)
 #define CONTROL_PD_DERIVATIVE_ALPHA          (0.25f)
 #define CONTROL_PD_D_TERM_LIMIT              (30.0f)
@@ -27,5 +27,16 @@
 #define LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT         (10U)
 #define LINE_FOLLOW_CURVE_HOLD_CYCLES                (20U)
 #define LINE_FOLLOW_BASE_STEP                       (10.0f)
+/* 同方向偏差持续 30 ms，或已到外探头时进入强修正。
+ * 45% 内轮下限只在强修正中启用；普通循迹仍保持 55% 下限。 */
+#define LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES         (3U)
+#define LINE_FOLLOW_HARD_TURN_DEVIATION              (1.5f)
+#define LINE_FOLLOW_HARD_TURN_MIN_FORWARD            (450.0f)
+#define LINE_FOLLOW_HARD_TURN_GAIN                   (1.25f)
+/* Direct four-sensor recovery: stop the outside/same-side motor immediately
+ * and run the other side at maximum. Disable only for PD regression tests. */
+#ifndef LINE_FOLLOW_DISCRETE_MODE
+#define LINE_FOLLOW_DISCRETE_MODE                    (1U)
+#endif
 
 #endif /* CONTROL_CONFIG_H */

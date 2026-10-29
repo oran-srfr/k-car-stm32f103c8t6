@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 static LineFollowState_t s_state = LINE_FOLLOW_STOPPED;
@@ -14,7 +15,16 @@ static uint16_t s_reacquire_cycles = 0U;
 static float s_previous_base_speed = 0.0f;
 static float s_reacquire_start_base = 0.0f;
 static uint16_t s_curve_hold_cycles = 0U;
+#if !LINE_FOLLOW_DISCRETE_MODE
+static int8_t s_error_direction = 0;
+static uint8_t s_error_direction_cycles = 0U;
+#endif
 static LineFollowResult_t s_latest_output;
+
+#define SENSOR_LEFT_OUTER_MASK   (1U << 0U)
+#define SENSOR_LEFT_INNER_MASK   (1U << 1U)
+#define SENSOR_RIGHT_INNER_MASK  (1U << 2U)
+#define SENSOR_RIGHT_OUTER_MASK  (1U << 3U)
 
 static void LineFollow_ResetState(LineFollowState_t state)
 {
@@ -28,6 +38,10 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_previous_base_speed = 0.0f;
   s_reacquire_start_base = 0.0f;
   s_curve_hold_cycles = 0U;
+#if !LINE_FOLLOW_DISCRETE_MODE
+  s_error_direction = 0;
+  s_error_direction_cycles = 0U;
+#endif
 
   s_latest_output = (LineFollowResult_t){0};
   s_latest_output.state = state;
@@ -79,6 +93,7 @@ static uint8_t LineFollow_ConfigIsValid(const MotorCommandConfig_t *motor_config
   return 1U;
 }
 
+#if !LINE_FOLLOW_DISCRETE_MODE
 static float LineFollow_SelectBaseSpeed(float deviation,
                                         const MotorCommandConfig_t *motor_config,
                                         const LineFollowConfig_t *follow_config)
@@ -102,19 +117,56 @@ static float LineFollow_SelectBaseSpeed(float deviation,
   }
   return follow_config->sharp_curve_speed;
 }
+#endif
 
 static MotorCommandResult_t LineFollow_MakeCommand(float base_speed,
                                                     float correction,
+                                                    bool hard_turn,
                                                     const MotorCommandConfig_t *motor_config)
 {
   MotorCommandConfig_t command_config = *motor_config;
 
   command_config.base_speed = base_speed;
+  if (hard_turn) {
+    correction *= LINE_FOLLOW_HARD_TURN_GAIN;
+    if ((LINE_FOLLOW_HARD_TURN_MIN_FORWARD > 0.0f) &&
+        (LINE_FOLLOW_HARD_TURN_MIN_FORWARD <
+         command_config.max_forward_command)) {
+      command_config.min_forward_command =
+          LINE_FOLLOW_HARD_TURN_MIN_FORWARD;
+    }
+  }
   /* 找线命令由状态机授权，仍复用已有左右轮混合和限幅函数。 */
   return MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
                                 correction,
                                 &command_config);
 }
+
+#if !LINE_FOLLOW_DISCRETE_MODE
+static bool LineFollow_ShouldUseHardTurn(float deviation)
+{
+  int8_t direction = (deviation < 0.0f) ? -1 :
+                     ((deviation > 0.0f) ? 1 : 0);
+
+  if (direction == 0) {
+    s_error_direction = 0;
+    s_error_direction_cycles = 0U;
+    return false;
+  }
+
+  if (direction == s_error_direction) {
+    if (s_error_direction_cycles < UINT8_MAX) {
+      ++s_error_direction_cycles;
+    }
+  } else {
+    s_error_direction = direction;
+    s_error_direction_cycles = 1U;
+  }
+
+  return (fabsf(deviation) >= LINE_FOLLOW_HARD_TURN_DEVIATION) ||
+         (s_error_direction_cycles >= LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES);
+}
+#endif
 
 static void LineFollow_SetFault(LineFollowFault_t fault,
                                 LineFollowResult_t *result)
@@ -171,11 +223,16 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_state = (s_lost_cycles == 1U) ? LINE_FOLLOW_LINE_LOST
                                   : LINE_FOLLOW_SEARCHING;
   s_reacquire_cycles = 0U;
+#if !LINE_FOLLOW_DISCRETE_MODE
+  s_error_direction = 0;
+  s_error_direction_cycles = 0U;
+#endif
   result->base_speed = follow_config->search_speed;
   search_correction = follow_config->search_turn_correction *
                       (float)s_last_valid_direction;
   motor = LineFollow_MakeCommand(result->base_speed,
                                  search_correction,
+                                 true,
                                  motor_config);
   result->left_command = motor.left_command;
   result->right_command = motor.right_command;
@@ -185,15 +242,66 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
                                     const LineFollowConfig_t *follow_config,
                                     LineFollowResult_t *result)
 {
+#if LINE_FOLLOW_DISCRETE_MODE
+  uint8_t bits = result->control.track.black_bits;
+  bool left_outer = (bits & SENSOR_LEFT_OUTER_MASK) != 0U;
+  bool left_inner = (bits & SENSOR_LEFT_INNER_MASK) != 0U;
+  bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
+  bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
+  float fast = motor_config->max_forward_command;
+  float straight = motor_config->base_speed;
+
+  (void)follow_config;
+  LineFollow_UpdateLastDeviation(result->control.track.deviation);
+  s_state = LINE_FOLLOW_TRACKING;
+  s_fault = LINE_FOLLOW_FAULT_NONE;
+  s_lost_cycles = 0U;
+  s_reacquire_cycles = 0U;
+  s_curve_hold_cycles = 0U;
+
+  if (left_outer || right_outer) {
+    /* Outer probe wins. Stop the lit side; keep driving toward the line. */
+    if (left_outer && right_outer) {
+      result->left_command = 0.0f;
+      result->right_command = 0.0f;
+    } else if (left_outer) {
+      result->left_command = 0.0f;
+      result->right_command = fast;
+    } else {
+      result->left_command = fast;
+      result->right_command = 0.0f;
+    }
+  } else if (left_inner && right_inner) {
+    result->left_command = straight;
+    result->right_command = straight;
+  } else if (left_inner) {
+    /* Left inner still on: stop the opposite (right) motor. */
+    result->left_command = fast;
+    result->right_command = 0.0f;
+  } else if (right_inner) {
+    /* Right inner still on: stop the opposite (left) motor. */
+    result->left_command = 0.0f;
+    result->right_command = fast;
+  } else {
+    result->left_command = 0.0f;
+    result->right_command = 0.0f;
+  }
+
+  result->base_speed = 0.5f * (result->left_command + result->right_command);
+  return;
+#else
   MotorCommandResult_t motor;
   float target_base;
   float alpha;
+  bool hard_turn;
 
   target_base = LineFollow_SelectBaseSpeed(result->control.track.deviation,
                                            motor_config,
                                            follow_config);
+  hard_turn = LineFollow_ShouldUseHardTurn(result->control.track.deviation);
   motor = LineFollow_MakeCommand(target_base,
                                  result->control.pd.output,
+                                 hard_turn,
                                  motor_config);
 
   if ((s_state == LINE_FOLLOW_LINE_LOST) ||
@@ -215,6 +323,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
     {
       target_base = s_previous_base_speed + LINE_FOLLOW_BASE_STEP;
       motor = LineFollow_MakeCommand(target_base, result->control.pd.output,
+                                      hard_turn,
                                       motor_config);
     }
     result->base_speed = target_base;
@@ -246,6 +355,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   /* Smooth only forward speed. Blending old wheel commands can keep turning
    * toward the lost-line side even after the line reappears on the other side. */
   motor = LineFollow_MakeCommand(result->base_speed, result->control.pd.output,
+                                  hard_turn,
                                   motor_config);
   result->left_command = motor.left_command;
   result->right_command = motor.right_command;
@@ -256,6 +366,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
     s_state = LINE_FOLLOW_TRACKING;
     s_lost_cycles = 0U;
   }
+#endif
 }
 
 /** 初始化后保持停止，防止复位后产生非零命令。 */

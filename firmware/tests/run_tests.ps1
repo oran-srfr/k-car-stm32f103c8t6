@@ -43,7 +43,8 @@ try {
     Invoke-Test -Name 'test_laptimer' -Sources @('Core/Src/LapTimer.c', 'tests/test_laptimer.c')
     Invoke-Test -Name 'test_mpulink' -Sources @('Core/Src/MpuLink.c', 'tests/test_mpulink.c') -Extra @('-Itests')
     Invoke-Test -Name 'test_tracking' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'tests/test_tracking.c')
-    Invoke-Test -Name 'test_line_follow' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_line_follow.c') -Extra @('-Itests')
+    Invoke-Test -Name 'test_line_follow_pd' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_line_follow.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=0')
+    Invoke-Test -Name 'test_discrete_line_follow' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_discrete_line_follow.c')
 
     if ($script:failed -ne 0) {
         Write-Host "$($script:failed) test executable(s) failed." -ForegroundColor Red

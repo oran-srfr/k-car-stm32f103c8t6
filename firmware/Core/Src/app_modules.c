@@ -4,6 +4,7 @@
 #include "board_pins.h"
 #include "buzzer.h"
 #include "control_config.h"
+#include "lcd.h"
 #include "lcd_init.h"
 #include "line_sensor.h"
 #include "motor_driver.h"
@@ -33,6 +34,7 @@ static LineFollowConfig_t s_line_follow_config = {
     LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
 };
 static uint32_t s_last_control_ms;
+static char s_debug_line[2][17];
 
 volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
 /* Electrical X1..X4 levels BEFORE spatial mapping; use to identify SW->X. */
@@ -169,6 +171,103 @@ void Modules_Sound(AppSound event)
     (void)Buzzer_Play(sound, HAL_GetTick());
 }
 
+static void DebugLine_Clear(char *line)
+{
+    uint8_t i;
+
+    for (i = 0U; i < 16U; ++i) {
+        line[i] = ' ';
+    }
+    line[16] = '\0';
+}
+
+static void DebugLine_Append(char *line, const char *text)
+{
+    uint8_t pos = 0U;
+
+    while (pos < 16U && line[pos] != ' ') {
+        ++pos;
+    }
+    while (*text != '\0' && pos < 16U) {
+        line[pos++] = *text++;
+    }
+}
+
+static void DebugLine_AppendU16(char *line, uint16_t value, uint8_t width)
+{
+    uint8_t pos = 0U;
+    uint8_t i;
+
+    while (pos < 16U && line[pos] != ' ') {
+        ++pos;
+    }
+    if ((uint16_t)pos + width > 16U) {
+        return;
+    }
+    for (i = width; i > 0U; --i) {
+        line[pos + i - 1U] = (char)('0' + value % 10U);
+        value /= 10U;
+    }
+}
+
+static void DebugLine_AppendHex8(char *line, uint8_t value)
+{
+    static const char digits[] = "0123456789ABCDEF";
+    uint8_t pos = 0U;
+
+    while (pos < 16U && line[pos] != ' ') {
+        ++pos;
+    }
+    if (pos + 2U <= 16U) {
+        line[pos] = digits[(value >> 4U) & 0x0FU];
+        line[pos + 1U] = digits[value & 0x0FU];
+    }
+}
+
+static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
+                           uint16_t color)
+{
+    uint8_t i;
+
+    for (i = 0U; i < 16U; ++i) {
+        if (s_debug_line[index][i] != text[i]) {
+            for (i = 0U; i < 16U; ++i) {
+                s_debug_line[index][i] = text[i];
+            }
+            LCD_ShowString(0U, y, (const uint8_t *)text, color, BLACK, 16U, 0U);
+            return;
+        }
+    }
+}
+
+static void Debug_Display(const AppStatus *status)
+{
+    char line[17];
+
+    /* S/E: app state/error; L/B: line status/black bitmap; O/D: output/driver. */
+    DebugLine_Clear(line);
+    DebugLine_Append(line, "S");
+    DebugLine_AppendU16(line, (uint16_t)status->state, 1U);
+    DebugLine_Append(line, "E");
+    DebugLine_AppendU16(line, (uint16_t)status->error, 1U);
+    DebugLine_Append(line, "L");
+    DebugLine_AppendU16(line, (uint16_t)g_tracking_status, 1U);
+    DebugLine_Append(line, "B");
+    DebugLine_AppendHex8(line, g_tracking_bits);
+    DebugLine_Append(line, "O");
+    DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
+    DebugLine_Append(line, "D");
+    DebugLine_AppendU16(line, g_motor_driver_enabled ? 1U : 0U, 1U);
+    DebugLine_Show(112U, 0U, line, WHITE);
+
+    DebugLine_Clear(line);
+    DebugLine_Append(line, "A");
+    DebugLine_AppendU16(line, (uint16_t)g_motor_driver_left_actual, 4U);
+    DebugLine_Append(line, "/");
+    DebugLine_AppendU16(line, (uint16_t)g_motor_driver_right_actual, 4U);
+    DebugLine_Show(132U, 1U, line, GREEN);
+}
+
 void Modules_Display(const AppStatus *status)
 {
     AttitudeStatus attitude;
@@ -180,4 +279,5 @@ void Modules_Display(const AppStatus *status)
     HCI_RevCount = status->reverse_spaces;
     HCI_SideCount = status->side_spaces;
     HCI_Update();
+    Debug_Display(status);
 }

@@ -13,6 +13,10 @@
 #ifndef MOTOR_DRIVER_RIGHT_REVERSED
 #define MOTOR_DRIVER_RIGHT_REVERSED    (0U)
 #endif
+/* 实车左右驱动通道互换时只交换差速分配；两轮前进极性保持不变。 */
+#ifndef MOTOR_DRIVER_SWAP_LEFT_RIGHT
+#define MOTOR_DRIVER_SWAP_LEFT_RIGHT   (1U)
+#endif
 
 /* Watch 调试变量：请求命令即接口输入，实际命令只在驱动使能时非零。 */
 extern volatile uint8_t g_motor_driver_initialized;

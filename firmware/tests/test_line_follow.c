@@ -51,8 +51,10 @@ static LineFollowResult_t step(uint8_t bits)
 static void moving(LineFollowResult_t r)
 {
     assert(r.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(r.left_command >= 550.0f && r.left_command <= 800.0f);
-    assert(r.right_command >= 550.0f && r.right_command <= 800.0f);
+    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
+    assert(r.left_command <= 800.0f);
+    assert(r.right_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
+    assert(r.right_command <= 800.0f);
 }
 
 static void stopped(LineFollowResult_t r)
@@ -73,11 +75,12 @@ static void test_geometry_and_small_corrections(void)
         if (errors[i] > 0) assert(r.left_command > r.right_command);
         if (errors[i] == 0) assert(r.left_command == r.right_command);
     }
-    /* One inner sensor: a few percentage points, not full steering. */
+    /* One inner sensor: immediate partial steering without full saturation. */
     LineFollow_Start();
     (void)step(CENTER);
     LineFollowResult_t r = step(LEFT_INNER);
-    assert(r.right_command - r.left_command < 100.0f);
+    assert(r.right_command - r.left_command > 100.0f);
+    assert(r.right_command - r.left_command < 200.0f);
     moving(r);
     r = step(CENTER);
     assert(fabsf(r.control.pd.output) <= CONTROL_PD_D_TERM_LIMIT);
@@ -114,6 +117,23 @@ static void test_recovery(void)
     assert(r.fault == LINE_FOLLOW_FAULT_LOST_TIMEOUT);
     stopped(r);
     stopped(step(CENTER)); /* latched even if a line returns */
+}
+
+static void test_progressive_steering(void)
+{
+    LineFollow_Start();
+    LineFollowResult_t r = step(CENTER);
+    const float initial_differential = fabsf(r.left_command - r.right_command);
+
+    for (unsigned i = 0; i < LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES; ++i) {
+        r = step(LEFT_INNER);
+        moving(r);
+    }
+
+    assert(fabsf(r.left_command - r.right_command) > initial_differential);
+    assert(r.left_command < r.right_command);
+    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
+    assert(r.right_command <= 800.0f);
 }
 
 static void test_stops_and_curve_hold(void)
@@ -199,6 +219,7 @@ int main(void)
 {
     test_geometry_and_small_corrections();
     test_recovery();
+    test_progressive_steering();
     test_stops_and_curve_hold();
     test_r60_arc(1.00f, 0.00f, 1.0f);
     test_r60_arc(0.97f, 0.03f, 1.0f);

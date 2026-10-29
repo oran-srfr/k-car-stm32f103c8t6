@@ -216,8 +216,13 @@ void MotorDriver_SetRight(int16_t command)
 
 void MotorDriver_SetBoth(int16_t left, int16_t right)
 {
+#if MOTOR_DRIVER_SWAP_LEFT_RIGHT
+  MotorDriver_SetLeft(right);
+  MotorDriver_SetRight(left);
+#else
   MotorDriver_SetLeft(left);
   MotorDriver_SetRight(right);
+#endif
 }
 
 void MotorDriver_Stop(void)

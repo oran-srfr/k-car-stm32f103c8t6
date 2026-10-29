@@ -4,10 +4,11 @@
 /* 控制参数默认值集中在这里，运行时仍可通过 Watch 修改对应配置变量。 */
 #define CONTROL_PERIOD_MS                    (5U)
 #define CONTROL_PERIOD_SECONDS               ((float)CONTROL_PERIOD_MS / 1000.0f)
-#define CONTROL_KP_DEFAULT                   (80.0f)
-#define CONTROL_KD_DEFAULT                   (0.3f)
+#define CONTROL_KP_DEFAULT                   (40.0f)
+#define CONTROL_KD_DEFAULT                   (0.2f)
 #define CONTROL_PD_OUTPUT_LIMIT_DEFAULT      (120.0f)
-#define CONTROL_PD_DERIVATIVE_ALPHA          (0.25f)
+#define CONTROL_PD_DERIVATIVE_TAU_SECONDS    (0.03f)
+#define CONTROL_PD_DERIVATIVE_ALPHA          (CONTROL_PERIOD_SECONDS / (CONTROL_PD_DERIVATIVE_TAU_SECONDS + CONTROL_PERIOD_SECONDS))
 #define CONTROL_PD_D_TERM_LIMIT              (30.0f)
 /* Driver units: 1000 = full duty. 650 = 65%, NOT TIM3 CCR=650.
  * User requested 50..80% duty; use 55% floor with a 5-point margin. */
@@ -23,20 +24,15 @@
 #define LINE_FOLLOW_STRAIGHT_MAX_DEVIATION_DEFAULT   (0.5f)
 #define LINE_FOLLOW_CURVE_MAX_DEVIATION_DEFAULT      (1.5f)
 #define LINE_FOLLOW_SEARCH_CORRECTION_DEFAULT       (120.0f)
-#define LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT          (30U)
-#define LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT         (10U)
-#define LINE_FOLLOW_CURVE_HOLD_CYCLES                (20U)
-#define LINE_FOLLOW_BASE_STEP                       (10.0f)
-/* 同方向偏差持续 30 ms，或已到外探头时进入强修正。
- * 45% 内轮下限只在强修正中启用；普通循迹仍保持 55% 下限。 */
-#define LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES         (3U)
-#define LINE_FOLLOW_HARD_TURN_DEVIATION              (1.5f)
-#define LINE_FOLLOW_HARD_TURN_MIN_FORWARD            (450.0f)
-#define LINE_FOLLOW_HARD_TURN_GAIN                   (1.25f)
-/* Direct four-sensor recovery: stop the outside/same-side motor immediately
- * and run the other side at maximum. Disable only for PD regression tests. */
-#ifndef LINE_FOLLOW_DISCRETE_MODE
-#define LINE_FOLLOW_DISCRETE_MODE                    (1U)
-#endif
+/* Durations stay in milliseconds when CONTROL_PERIOD_MS changes. */
+#define CONTROL_CYCLES_FOR_MS(ms)                   (((ms) + CONTROL_PERIOD_MS - 1U) / CONTROL_PERIOD_MS)
+#define LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT          CONTROL_CYCLES_FOR_MS(300U)
+#define LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT         CONTROL_CYCLES_FOR_MS(100U)
+#define LINE_FOLLOW_CURVE_HOLD_CYCLES                CONTROL_CYCLES_FOR_MS(200U)
+#define LINE_FOLLOW_DIRECTION_HOLD_CYCLES            CONTROL_CYCLES_FOR_MS(200U)
+#define LINE_FOLLOW_BASE_STEP                       (1000.0f * CONTROL_PERIOD_SECONDS)
+/* At 5 ms: per-wheel steering changes by at most 20 units (2 duty points).
+ * Crossing sides first drops stale steering to zero, then ramps the new side. */
+#define LINE_FOLLOW_CORRECTION_STEP                 (4000.0f * CONTROL_PERIOD_SECONDS)
 
 #endif /* CONTROL_CONFIG_H */

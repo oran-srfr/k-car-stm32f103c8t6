@@ -51,10 +51,8 @@ static LineFollowResult_t step(uint8_t bits)
 static void moving(LineFollowResult_t r)
 {
     assert(r.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.left_command <= 800.0f);
-    assert(r.right_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.right_command <= 800.0f);
+    assert(r.left_command >= 550.0f && r.left_command <= 800.0f);
+    assert(r.right_command >= 550.0f && r.right_command <= 800.0f);
 }
 
 static void stopped(LineFollowResult_t r)
@@ -75,12 +73,11 @@ static void test_geometry_and_small_corrections(void)
         if (errors[i] > 0) assert(r.left_command > r.right_command);
         if (errors[i] == 0) assert(r.left_command == r.right_command);
     }
-    /* One inner sensor: immediate partial steering without full saturation. */
+    /* One inner sensor: a few percentage points, not full steering. */
     LineFollow_Start();
     (void)step(CENTER);
     LineFollowResult_t r = step(LEFT_INNER);
-    assert(r.right_command - r.left_command > 100.0f);
-    assert(r.right_command - r.left_command < 200.0f);
+    assert(r.right_command - r.left_command < 100.0f);
     moving(r);
     r = step(CENTER);
     assert(fabsf(r.control.pd.output) <= CONTROL_PD_D_TERM_LIMIT);
@@ -119,23 +116,6 @@ static void test_recovery(void)
     stopped(step(CENTER)); /* latched even if a line returns */
 }
 
-static void test_progressive_steering(void)
-{
-    LineFollow_Start();
-    LineFollowResult_t r = step(CENTER);
-    const float initial_differential = fabsf(r.left_command - r.right_command);
-
-    for (unsigned i = 0; i < LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES; ++i) {
-        r = step(LEFT_INNER);
-        moving(r);
-    }
-
-    assert(fabsf(r.left_command - r.right_command) > initial_differential);
-    assert(r.left_command < r.right_command);
-    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.right_command <= 800.0f);
-}
-
 static void test_stops_and_curve_hold(void)
 {
     LineFollow_Init();
@@ -163,6 +143,73 @@ static void test_stops_and_curve_hold(void)
     stopped(r);
 }
 
+static float differential(LineFollowResult_t r)
+{
+    return 0.5f * (r.left_command - r.right_command);
+}
+
+static void test_turn_transitions(void)
+{
+    /* Production defaults: a noisy inner sensor must not stop either wheel. */
+    LineFollow_Start();
+    (void)step(CENTER);
+    float previous = 0.0f;
+    for (unsigned i = 0; i < 100; ++i) {
+        LineFollowResult_t r = step(i % 2 == 0 ? LEFT_INNER : CENTER);
+        moving(r);
+        float correction = differential(r);
+        if (previous * correction >= 0.0f) {
+            assert(fabsf(correction - previous) <= LINE_FOLLOW_CORRECTION_STEP + 0.01f);
+        }
+        if (i % 2 == 0) assert(correction < 0.0f);
+        assert(fabsf(correction) <= 50.0f);
+        previous = correction;
+    }
+
+    /* An outer-to-inner transition on the same side cannot reverse steering. */
+    LineFollow_Start();
+    for (unsigned i = 0; i < 10; ++i) {
+        LineFollowResult_t r = step(LEFT_OUTER);
+        moving(r);
+        assert(differential(r) < 0.0f);
+    }
+    for (unsigned i = 0; i < 10; ++i) {
+        LineFollowResult_t r = step(LEFT_INNER);
+        moving(r);
+        assert(differential(r) < 0.0f);
+    }
+    LineFollowResult_t r = step(RIGHT_INNER);
+    moving(r);
+    assert(differential(r) > 0.0f);
+    assert(differential(r) <= LINE_FOLLOW_CORRECTION_STEP);
+
+    /* A new straight gap cannot reuse a turn from hundreds of ms ago. */
+    for (unsigned i = 0; i < LINE_FOLLOW_DIRECTION_HOLD_CYCLES; ++i) r = step(CENTER);
+    assert(r.last_valid_direction == 0);
+    r = step(LOST);
+    moving(r);
+    assert(fabsf(differential(r)) < 0.01f);
+    LineFollow_Stop();
+    stopped(step(CENTER));
+    LineFollow_Start();
+    r = step(CENTER);
+    assert(differential(r) == 0.0f);
+}
+
+static void test_durations(void)
+{
+    /* Explicit real-time expectations catch a 10 ms -> 5 ms period migration. */
+    assert(follow.max_lost_cycles * CONTROL_PERIOD_MS == 300U);
+    assert(follow.reacquire_cycles * CONTROL_PERIOD_MS == 100U);
+    assert(LINE_FOLLOW_CURVE_HOLD_CYCLES * CONTROL_PERIOD_MS == 200U);
+    LineFollow_Start();
+    (void)step(LEFT_INNER);
+    for (unsigned elapsed = 0; elapsed < 300; elapsed += CONTROL_PERIOD_MS) moving(step(LOST));
+    LineFollowResult_t r = step(LOST);
+    assert(r.fault == LINE_FOLLOW_FAULT_LOST_TIMEOUT);
+    stopped(r);
+}
+
 static float segment_distance(float x, float y, float y_line)
 {
     float closest_x = fmaxf(0.0f, fminf(x, 0.85f));
@@ -181,10 +228,11 @@ static float track_distance(float x, float y)
     return distance;
 }
 
-static void test_r60_arc(float left_gain, float initial_heading, float mirror)
+static void test_r60_arc(float left_gain, float initial_heading, float mirror, float lag_seconds, unsigned dropout_period)
 {
     float x = 0.10f, y = 0.0f, heading = initial_heading;
     float max_distance = 0.0f;
+    float vl = 0.0f, vr = 0.0f;
     unsigned cycles;
     LineFollow_Start();
     for (cycles = 0; cycles < 6000; ++cycles) {
@@ -196,11 +244,14 @@ static void test_r60_arc(float left_gain, float initial_heading, float mirror)
             float sy = y + 0.08f * sinf(heading) + lateral * cosf(heading);
             if (track_distance(sx, mirror * sy) <= 0.0075f) black |= (1U << bit);
         }
+        /* A one-sample dropout is an electrical/surface glitch, not a turn. */
+        if (dropout_period != 0 && cycles > 0 && cycles % dropout_period == 0) black = 0;
         raw_bits = physical_to_raw(black);
         LineFollowResult_t r = LineFollow_Update(&pd, &motor, &follow);
         moving(r);
-        float vl = 0.6f * r.left_command / 1000.0f * left_gain;
-        float vr = 0.6f * r.right_command / 1000.0f;
+        float alpha = CONTROL_PERIOD_SECONDS / (lag_seconds + CONTROL_PERIOD_SECONDS);
+        vl += alpha * (0.6f * r.left_command / 1000.0f * left_gain - vl);
+        vr += alpha * (0.6f * r.right_command / 1000.0f - vr);
         float velocity = (vl + vr) * 0.5f;
         heading += (vr - vl) / 0.14f * CONTROL_PERIOD_SECONDS;
         x += velocity * cosf(heading) * CONTROL_PERIOD_SECONDS;
@@ -208,8 +259,8 @@ static void test_r60_arc(float left_gain, float initial_heading, float mirror)
         max_distance = fmaxf(max_distance, track_distance(x, mirror * y));
         if (mirror * y < -1.15f && x < 0.55f) break;
     }
-    printf("R60 model: motor gain %.2f, heading %.2f, turn %+.0f: %u steps, max axle error %.1f mm\n",
-           left_gain, initial_heading, mirror, cycles, max_distance * 1000.0f);
+    printf("R60 model: motor gain %.2f, heading %.2f, turn %+.0f, lag %.0f ms, dropout /%u: %u steps, max axle error %.1f mm\n",
+           left_gain, initial_heading, mirror, lag_seconds * 1000.0f, dropout_period, cycles, max_distance * 1000.0f);
     assert(cycles < 6000);
     assert(max_distance < 0.04f);
     assert(cosf(heading) < -0.95f);
@@ -219,14 +270,19 @@ int main(void)
 {
     test_geometry_and_small_corrections();
     test_recovery();
-    test_progressive_steering();
     test_stops_and_curve_hold();
-    test_r60_arc(1.00f, 0.00f, 1.0f);
-    test_r60_arc(0.97f, 0.03f, 1.0f);
-    test_r60_arc(1.03f, -0.03f, 1.0f);
-    test_r60_arc(1.00f, 0.00f, -1.0f);
-    test_r60_arc(0.97f, 0.03f, -1.0f);
-    test_r60_arc(1.03f, -0.03f, -1.0f);
+    test_turn_transitions();
+    test_durations();
+    test_r60_arc(1.00f, 0.00f, 1.0f, 0.0f, 0);
+    test_r60_arc(0.97f, 0.03f, 1.0f, 0.0f, 0);
+    test_r60_arc(1.03f, -0.03f, 1.0f, 0.0f, 0);
+    test_r60_arc(1.00f, 0.00f, -1.0f, 0.0f, 0);
+    test_r60_arc(0.97f, 0.03f, -1.0f, 0.0f, 0);
+    test_r60_arc(1.03f, -0.03f, -1.0f, 0.0f, 0);
+    test_r60_arc(0.95f, 0.03f, 1.0f, 0.05f, 71);
+    test_r60_arc(1.05f, -0.03f, -1.0f, 0.05f, 71);
+    test_r60_arc(0.95f, 0.03f, -1.0f, 0.05f, 71);
+    test_r60_arc(1.05f, -0.03f, 1.0f, 0.05f, 71);
     puts("PASS: physical sensor direction, duty limits, recovery, stops and R60 model");
     return 0;
 }

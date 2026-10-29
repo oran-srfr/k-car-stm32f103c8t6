@@ -6,7 +6,9 @@
 typedef struct
 {
   float base_speed;          /* 抽象前进命令，单位为软件命令单位，不是物理速度。 */
-  float max_forward_command; /* 单侧最大前进命令；输出范围为 0 到该值。 */
+  float max_forward_command; /* 单侧最大前进命令，1000 为满占空比。 */
+  float min_forward_command; /* 运行时最低驱动命令；停车仍输出 0。 */
+  float straight_trim;       /* 静态差速补偿：正值提高左轮、降低右轮。 */
 } MotorCommandConfig_t;
 
 typedef struct

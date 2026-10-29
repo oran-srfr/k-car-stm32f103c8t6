@@ -33,8 +33,8 @@ typedef struct
   float straight_max_deviation;      /* 小于等于该绝对偏差时使用直线速度。 */
   float curve_max_deviation;         /* 小于等于该绝对偏差时使用普通弯速度。 */
   float search_turn_correction;      /* 找线时按最后方向施加的差速修正量。 */
-  uint16_t max_lost_cycles;          /* 允许连续丢线的最大控制周期数。 */
-  uint16_t reacquire_cycles;         /* 找回轨迹后平滑恢复所用周期数。 */
+  uint16_t max_lost_cycles;          /* 丢线预算；连续稳定找回后才清零。 */
+  uint16_t reacquire_cycles;         /* 连续找回确认周期数，同时平滑恢复基础速度。 */
 } LineFollowConfig_t;
 
 typedef struct

@@ -15,7 +15,7 @@ typedef struct
 {
   LineTrackStatus_t status;
   float output;     /* 仅 NORMAL 时有效；是抽象控制量，不是电机指令。 */
-  float derivative; /* 偏差变化率，单位为偏差单位/秒。 */
+  float derivative; /* 低通滤波后的偏差变化率，单位为偏差单位/秒。 */
 } PDControllerResult_t;
 
 /* 保留原宏名，实际数值由 control_config.h 集中管理。 */

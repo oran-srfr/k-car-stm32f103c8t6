@@ -12,11 +12,8 @@ static uint8_t s_has_valid_history = 0U;
 static uint16_t s_lost_cycles = 0U;
 static uint16_t s_reacquire_cycles = 0U;
 static float s_previous_base_speed = 0.0f;
-static float s_previous_left_command = 0.0f;
-static float s_previous_right_command = 0.0f;
 static float s_reacquire_start_base = 0.0f;
-static float s_reacquire_start_left = 0.0f;
-static float s_reacquire_start_right = 0.0f;
+static uint16_t s_curve_hold_cycles = 0U;
 static LineFollowResult_t s_latest_output;
 
 static void LineFollow_ResetState(LineFollowState_t state)
@@ -29,11 +26,8 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_lost_cycles = 0U;
   s_reacquire_cycles = 0U;
   s_previous_base_speed = 0.0f;
-  s_previous_left_command = 0.0f;
-  s_previous_right_command = 0.0f;
   s_reacquire_start_base = 0.0f;
-  s_reacquire_start_left = 0.0f;
-  s_reacquire_start_right = 0.0f;
+  s_curve_hold_cycles = 0U;
 
   s_latest_output = (LineFollowResult_t){0};
   s_latest_output.state = state;
@@ -53,6 +47,8 @@ static uint8_t LineFollow_ConfigIsValid(const MotorCommandConfig_t *motor_config
 
   if (!isfinite(motor_config->base_speed) ||
       !isfinite(motor_config->max_forward_command) ||
+      !isfinite(motor_config->min_forward_command) ||
+      !isfinite(motor_config->straight_trim) ||
       !isfinite(follow_config->curve_speed) ||
       !isfinite(follow_config->sharp_curve_speed) ||
       !isfinite(follow_config->search_speed) ||
@@ -63,11 +59,16 @@ static uint8_t LineFollow_ConfigIsValid(const MotorCommandConfig_t *motor_config
     return 0U;
   }
 
-  if ((motor_config->base_speed < 0.0f) ||
-      (motor_config->max_forward_command < 0.0f) ||
-      (follow_config->curve_speed < 0.0f) ||
-      (follow_config->sharp_curve_speed < 0.0f) ||
-      (follow_config->search_speed < 0.0f) ||
+  if ((motor_config->min_forward_command <= 0.0f) ||
+      (motor_config->max_forward_command <= motor_config->min_forward_command) ||
+      (motor_config->base_speed < motor_config->min_forward_command) ||
+      (motor_config->base_speed > motor_config->max_forward_command) ||
+      (follow_config->curve_speed < motor_config->min_forward_command) ||
+      (follow_config->curve_speed > motor_config->base_speed) ||
+      (follow_config->sharp_curve_speed < motor_config->min_forward_command) ||
+      (follow_config->sharp_curve_speed > follow_config->curve_speed) ||
+      (follow_config->search_speed < motor_config->min_forward_command) ||
+      (follow_config->search_speed > motor_config->max_forward_command) ||
       (follow_config->straight_max_deviation < 0.0f) ||
       (follow_config->curve_max_deviation < follow_config->straight_max_deviation) ||
       (follow_config->search_turn_correction < 0.0f))
@@ -86,8 +87,15 @@ static float LineFollow_SelectBaseSpeed(float deviation,
 
   if (absolute_deviation <= follow_config->straight_max_deviation)
   {
+    /* Centered samples occur throughout an arc; do not accelerate on each. */
+    if (s_curve_hold_cycles > 0U)
+    {
+      --s_curve_hold_cycles;
+      return follow_config->curve_speed;
+    }
     return motor_config->base_speed;
   }
+  s_curve_hold_cycles = LINE_FOLLOW_CURVE_HOLD_CYCLES;
   if (absolute_deviation <= follow_config->curve_max_deviation)
   {
     return follow_config->curve_speed;
@@ -132,10 +140,8 @@ static void LineFollow_UpdateLastDeviation(float deviation)
   {
     s_last_valid_direction = 1;
   }
-  else
-  {
-    s_last_valid_direction = 0;
-  }
+  /* A centered sample has no turn information. Preserve the last nonzero
+   * direction for short gaps on an arc; Start/Stop explicitly clear it. */
 }
 
 static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
@@ -196,16 +202,21 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
     s_state = LINE_FOLLOW_REACQUIRE;
     s_reacquire_cycles = 0U;
     s_reacquire_start_base = s_previous_base_speed;
-    s_reacquire_start_left = s_previous_left_command;
-    s_reacquire_start_right = s_previous_right_command;
   }
 
-  s_lost_cycles = 0U;
   LineFollow_UpdateLastDeviation(result->control.track.deviation);
 
   if (s_state != LINE_FOLLOW_REACQUIRE)
   {
     s_state = LINE_FOLLOW_TRACKING;
+    s_lost_cycles = 0U;
+    if ((s_previous_base_speed > 0.0f) &&
+        (target_base > s_previous_base_speed + LINE_FOLLOW_BASE_STEP))
+    {
+      target_base = s_previous_base_speed + LINE_FOLLOW_BASE_STEP;
+      motor = LineFollow_MakeCommand(target_base, result->control.pd.output,
+                                      motor_config);
+    }
     result->base_speed = target_base;
     result->left_command = motor.left_command;
     result->right_command = motor.right_command;
@@ -232,15 +243,18 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
 
   result->base_speed = s_reacquire_start_base +
                        alpha * (target_base - s_reacquire_start_base);
-  result->left_command = s_reacquire_start_left +
-                         alpha * (motor.left_command - s_reacquire_start_left);
-  result->right_command = s_reacquire_start_right +
-                          alpha * (motor.right_command - s_reacquire_start_right);
+  /* Smooth only forward speed. Blending old wheel commands can keep turning
+   * toward the lost-line side even after the line reappears on the other side. */
+  motor = LineFollow_MakeCommand(result->base_speed, result->control.pd.output,
+                                  motor_config);
+  result->left_command = motor.left_command;
+  result->right_command = motor.right_command;
 
   if ((follow_config->reacquire_cycles == 0U) ||
       (s_reacquire_cycles >= follow_config->reacquire_cycles))
   {
     s_state = LINE_FOLLOW_TRACKING;
+    s_lost_cycles = 0U;
   }
 }
 
@@ -305,8 +319,6 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
   }
 
   s_previous_base_speed = result.base_speed;
-  s_previous_left_command = result.left_command;
-  s_previous_right_command = result.right_command;
 
   result.state = s_state;
   result.fault = s_fault;

@@ -18,7 +18,9 @@ static PDControllerConfig_t s_pd_config = {
 };
 static MotorCommandConfig_t s_motor_command_config = {
     CONTROL_BASE_SPEED_DEFAULT,
-    CONTROL_MAX_FORWARD_COMMAND_DEFAULT
+    CONTROL_MAX_FORWARD_COMMAND_DEFAULT,
+    CONTROL_MIN_FORWARD_COMMAND_DEFAULT,
+    CONTROL_STRAIGHT_TRIM_DEFAULT
 };
 static LineFollowConfig_t s_line_follow_config = {
     LINE_FOLLOW_CURVE_SPEED_DEFAULT,
@@ -33,6 +35,8 @@ static LineFollowConfig_t s_line_follow_config = {
 static uint32_t s_last_control_ms;
 
 volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
+/* Electrical X1..X4 levels BEFORE spatial mapping; use to identify SW->X. */
+volatile uint8_t g_tracking_raw_bits = 0x0FU;
 volatile uint8_t g_tracking_bits = 0U;
 volatile float g_tracking_deviation = 0.0f;
 
@@ -82,6 +86,7 @@ static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
     inputs->line_start_ready = vehicle.line_output_valid &&
         vehicle.line_follow.control.track.status == LINE_TRACK_STATUS_NORMAL;
     g_tracking_status = vehicle.line_follow.control.track.status;
+    g_tracking_raw_bits = vehicle.line_follow.control.raw_bits;
     g_tracking_bits = vehicle.line_follow.control.track.black_bits;
     g_tracking_deviation = vehicle.line_follow.control.track.deviation;
 }

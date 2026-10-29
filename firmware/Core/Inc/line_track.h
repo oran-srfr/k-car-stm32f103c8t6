@@ -4,7 +4,24 @@
 #include <stdint.h>
 
 /* Set to 0 when the tracking module drives a high level over a black line. */
+#ifndef LINE_SENSOR_BLACK_ACTIVE_LOW
 #define LINE_SENSOR_BLACK_ACTIVE_LOW 1U
+#endif
+
+/* Raw bit numbers X1=0, X2=1, X3=2, X4=3. Change only after measuring
+ * the physical order with the car facing forward. Never invert PD to hide it. */
+#ifndef LINE_SENSOR_LEFT_OUTER_BIT
+#define LINE_SENSOR_LEFT_OUTER_BIT  1U
+#define LINE_SENSOR_LEFT_INNER_BIT  0U
+#define LINE_SENSOR_RIGHT_INNER_BIT 2U
+#define LINE_SENSOR_RIGHT_OUTER_BIT 3U
+#endif
+#if (LINE_SENSOR_LEFT_OUTER_BIT > 3U) || (LINE_SENSOR_LEFT_INNER_BIT > 3U) || \
+    (LINE_SENSOR_RIGHT_INNER_BIT > 3U) || (LINE_SENSOR_RIGHT_OUTER_BIT > 3U) || \
+    (((1U << LINE_SENSOR_LEFT_OUTER_BIT) | (1U << LINE_SENSOR_LEFT_INNER_BIT) | \
+      (1U << LINE_SENSOR_RIGHT_INNER_BIT) | (1U << LINE_SENSOR_RIGHT_OUTER_BIT)) != 0x0FU)
+#error "Line sensor mapping must be a permutation of raw bits 0..3"
+#endif
 
 typedef enum
 {

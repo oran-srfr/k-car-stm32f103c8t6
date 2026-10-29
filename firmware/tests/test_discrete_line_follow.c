@@ -1,4 +1,5 @@
 #include "line_follow.h"
+#include "legacy_line_walking.h"
 
 #include <assert.h>
 #include <math.h>
@@ -83,6 +84,12 @@ int main(void)
     const float straight = CONTROL_BASE_SPEED_DEFAULT;
 
     LineFollow_Start();
+    assert(LegacyLineWalking_Classify(CENTER) == LEGACY_LINE_STRAIGHT);
+    assert(LegacyLineWalking_Classify(LEFT_INNER) == LEGACY_LINE_LEFT_INNER);
+    assert(LegacyLineWalking_Classify(RIGHT_INNER) == LEGACY_LINE_RIGHT_INNER);
+    assert(LegacyLineWalking_Classify(LEFT_OUTER) == LEGACY_LINE_LEFT_OUTER);
+    assert(LegacyLineWalking_Classify(RIGHT_OUTER) == LEGACY_LINE_RIGHT_OUTER);
+    assert(LegacyLineWalking_Classify(0U) == LEGACY_LINE_ALL_OFF);
     expect(CENTER, straight, straight);
     expect(LEFT_INNER, inner_slow, inner_fast);
     expect(CENTER, straight, straight);

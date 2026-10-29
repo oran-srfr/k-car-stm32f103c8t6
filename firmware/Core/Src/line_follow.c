@@ -1,4 +1,5 @@
 #include "line_follow.h"
+#include "legacy_line_walking.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -267,11 +268,8 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
                                     LineFollowResult_t *result)
 {
 #if LINE_FOLLOW_DISCRETE_MODE
-  uint8_t bits = result->control.track.black_bits;
-  bool left_outer = (bits & SENSOR_LEFT_OUTER_MASK) != 0U;
-  bool left_inner = (bits & SENSOR_LEFT_INNER_MASK) != 0U;
-  bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
-  bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
+  LegacyLineWalkingPattern_t pattern =
+      LegacyLineWalking_Classify(result->control.track.black_bits);
   float inner_fast = LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT;
   float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
   float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
@@ -286,32 +284,36 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   s_reacquire_cycles = 0U;
   s_curve_hold_cycles = 0U;
 
-  if (left_outer || right_outer) {
-    /* Outer probe wins: use a larger two-wheel differential, never zero. */
-    if (left_outer && right_outer) {
-      result->left_command = inner_slow;
-      result->right_command = inner_slow;
-    } else if (left_outer) {
-      result->left_command = outer_slow;
-      result->right_command = outer_fast;
-    } else {
-      result->left_command = outer_fast;
-      result->right_command = outer_slow;
-    }
-  } else if (left_inner && right_inner) {
+  switch (pattern) {
+  case LEGACY_LINE_STRAIGHT:
     result->left_command = straight;
     result->right_command = straight;
-  } else if (left_inner) {
-    /* Line on the left: left wheel slower, right wheel faster. */
+    break;
+  case LEGACY_LINE_LEFT_INNER:
     result->left_command = inner_slow;
     result->right_command = inner_fast;
-  } else if (right_inner) {
-    /* Line on the right: left wheel faster, right wheel slower. */
+    break;
+  case LEGACY_LINE_LEFT_OUTER:
+    result->left_command = outer_slow;
+    result->right_command = outer_fast;
+    break;
+  case LEGACY_LINE_RIGHT_INNER:
     result->left_command = inner_fast;
     result->right_command = inner_slow;
-  } else {
+    break;
+  case LEGACY_LINE_RIGHT_OUTER:
+    result->left_command = outer_fast;
+    result->right_command = outer_slow;
+    break;
+  case LEGACY_LINE_BOTH_OUTER:
     result->left_command = inner_slow;
     result->right_command = inner_slow;
+    break;
+  case LEGACY_LINE_ALL_OFF:
+  default:
+    result->left_command = inner_slow;
+    result->right_command = inner_slow;
+    break;
   }
 
   result->base_speed = 0.5f * (result->left_command + result->right_command);

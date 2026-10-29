@@ -14,6 +14,7 @@ add_executable(k_car
     Core/Src/Attitude.c
     Core/Src/HCI.c
     Core/Src/LapTimer.c
+    Core/Src/legacy_line_walking.c
     Core/Src/line_control.c
     Core/Src/line_follow.c
     Core/Src/line_sensor.c

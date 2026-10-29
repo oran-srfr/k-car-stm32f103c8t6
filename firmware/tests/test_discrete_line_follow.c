@@ -1,13 +1,14 @@
 #include "line_follow.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #if LINE_FOLLOW_DISCRETE_MODE != 1U
 #error "This test requires the production discrete line-follow mode"
 #endif
-_Static_assert(CONTROL_PERIOD_MS == 5U, "Discrete control period must be 5 ms");
+_Static_assert(CONTROL_PERIOD_MS == 1U, "Discrete control period must be 1 ms");
 
 enum {
     LEFT_OUTER = 1U,
@@ -75,24 +76,39 @@ static void expect(uint8_t black, float left, float right)
 
 int main(void)
 {
-    const float fast = CONTROL_MAX_FORWARD_COMMAND_DEFAULT;
+    const float inner_fast = LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT;
+    const float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
+    const float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
+    const float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
     const float straight = CONTROL_BASE_SPEED_DEFAULT;
 
     LineFollow_Start();
     expect(CENTER, straight, straight);
-    expect(LEFT_INNER, fast, 0.0f);
+    expect(LEFT_INNER, inner_slow, inner_fast);
     expect(CENTER, straight, straight);
-    expect(RIGHT_INNER, 0.0f, fast);
-    expect(CENTER, straight, straight);
-
-    expect(LEFT_OUTER, 0.0f, fast);
-    expect(LEFT_OUTER | RIGHT_INNER, 0.0f, fast);
-    expect(LEFT_INNER, fast, 0.0f);
-    expect(RIGHT_OUTER, fast, 0.0f);
-    expect(RIGHT_OUTER | LEFT_INNER, fast, 0.0f);
+    expect(RIGHT_INNER, inner_fast, inner_slow);
     expect(CENTER, straight, straight);
 
-    expect(LEFT_OUTER | RIGHT_OUTER, 0.0f, 0.0f);
-    puts("PASS: direct outer/inner sensor motor state machine");
+    expect(LEFT_OUTER, outer_slow, outer_fast);
+    expect(LEFT_OUTER | RIGHT_INNER, outer_slow, outer_fast);
+    expect(LEFT_INNER, inner_slow, inner_fast);
+    expect(RIGHT_OUTER, outer_fast, outer_slow);
+    expect(RIGHT_OUTER | LEFT_INNER, outer_fast, outer_slow);
+    expect(CENTER, straight, straight);
+
+    expect(LEFT_OUTER | RIGHT_OUTER, inner_slow, inner_slow);
+
+    /* Four indications off: first move slowly, then search with a differential. */
+    expect(0U, CONTROL_MIN_FORWARD_COMMAND_DEFAULT,
+           CONTROL_MIN_FORWARD_COMMAND_DEFAULT);
+    LineFollowResult_t lost = step(0U);
+    for (unsigned i = 0U; i < LINE_FOLLOW_ALL_OFF_SLOW_CYCLES; ++i) {
+        lost = step(0U);
+    }
+    assert(lost.fault == LINE_FOLLOW_FAULT_NONE);
+    assert(lost.left_command > 0.0f && lost.right_command > 0.0f);
+    assert(fabsf(lost.left_command - lost.right_command) ==
+           outer_fast - outer_slow);
+    puts("PASS: direct sensor direction and two-wheel differential");
     return 0;
 }

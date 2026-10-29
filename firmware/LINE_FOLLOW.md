@@ -1,94 +1,113 @@
-# Four-sensor line following
+# 四路循迹：低速差速与 R60 半圆
 
-## Wiring used by this project
+## 已确认的方向与接线
 
-| Signal | STM32 pin | Notes |
+2026-10-29 用户最终确认：**探头从左到右 SW2、SW1、SW3、SW4**，
+且 **SW1→X1、SW2→X2、SW3→X3、SW4→X4**。
+板上接线口从左到右 X4、X3、X2、X1。接线口位置不能直接当作探头空间位置。
+因此软件从左到右映射为 **X2、X1、X3、X4**，与原映射一致。
+原映射不是本次确认出的反向转向原因；电机前进极性仍需实车核对。
+差速公式为：黑线在右侧 → 左轮快、右轮慢；黑线在左侧 → 左轮慢、右轮快。
+
+| 位置 | 探头 | 已确认输出口 | MCU 引脚 | 权重 | 单探头压黑线的 raw_bits（低有效） |
+|---|---|---|---|---|---|
+| 左外 | SW2 | X2 | PB1 | -3 | `0x0D` |
+| 左内 | SW1 | X1 | PB0 | -1 | `0x0E` |
+| 右内 | SW3 | X3 | PB10 | +1 | `0x0B` |
+| 右外 | SW4 | X4 | PB11 | +3 | `0x07` |
+
+默认映射下居中两内探头为 `raw_bits=0x0A`，归一化 `black_bits=0x06`。
+新增 Watch 变量 `g_tracking_raw_bits` 是重排前的原始电平：bit0=X1/PB0，
+bit1=X2/PB1，bit2=X3/PB10，bit3=X4/PB11，可用逐个遮挡探头确认对应关系。
+`line_track.h` 中的 `LINE_SENSOR_*_BIT` 配置空间位置；四个位必须互不重复。
+默认黑线低电平，若实测相反才修改 `LINE_SENSOR_BLACK_ACTIVE_LOW`。
+
+| 电机信号 | 引脚 |
+|---|---|
+| 左 PWMB | PA6 / TIM3_CH1 |
+| 左 BIN1 / BIN2 | PB7 / PB8 |
+| 右 PWMA | PA7 / TIM3_CH2 |
+| 右 AIN1 / AIN2 | PB6 / PB5 |
+| STBY | 硬接 3.3 V，不占 MCU 引脚 |
+
+逻辑正命令必须使对应车轮朝车头方向滚动。若单轮方向不符，只修改
+`motor_driver.h` 中该轮的 `MOTOR_DRIVER_*_REVERSED`；不要把左右传感器再次互换。
+电机极性没有从视频独立验证，本次不猜测修改。
+
+## 占空比与差速
+
+用户确认的 50～80 是**百分比**。驱动仍使用 1000 为满量程，
+例如命令 650 ≈ 65% 占空比；定时器比较值为 `command * ARR / 1000`，
+当前 ARR=3599，650 对应 CCR=2339。不要把 65 直接作为驱动命令，那只有约 6.5%。
+
+`control_config.h` 的起始参数如下（需要实车调试）：
+
+| 参数 | 命令值 | 对应意义 |
 |---|---|---|
-| X1 input | PB0 | Digital input, pull-up |
-| X2 input | PB1 | Digital input, pull-up |
-| X3 input | PB10 | Digital input, pull-up |
-| X4 input | PB11 | Digital input, pull-up |
-| Left PWM, PWMB | PA6 | TIM3_CH1 |
-| Right PWM, PWMA | PA7 | TIM3_CH2 |
-| Left BIN1 / BIN2 | PB7 / PB8 | TB6612 direction |
-| Right AIN1 / AIN2 | PB6 / PB5 | TB6612 direction |
-| TB6612 STBY | 3.3 V | Wired high; not an MCU pin |
+| 直线基准 | 650 | 65% |
+| 普通弯基准 | 630 | 63% |
+| 大偏差弯基准 | 620 | 62% |
+| 找线基准 | 650 | 65% |
+| 两轮运行下限 | 550 | 55%，相对 50% 留 5 个百分点余量 |
+| 两轮运行上限 | 800 | 80% |
+| Kp / Kd | 40 / 0.2 | 每偏差单位约 4 个占空比百分点的比例修正 |
+| 修正限幅 | 120 | 单轮最多 ±12 个百分点 |
+| 静态差速补偿 | 0 | 正数提高左轮、降低右轮；10 = 单轮 1 个百分点 |
 
-The attached module originally used PA0..PA3 for sensors, PB0/PB1/PB10/PB11
-for motor direction, and PB12 for STBY. Those assignments conflict with the
-buzzer, TFT, attitude UART, tracking inputs, and right encoder in this project,
-so only its control algorithms were imported. The hardware mapping was replaced
-with the confirmed wiring above.
+混合器先限制差速，再调整两轮共同基准，保证两轮始终在 55%～80% 范围内，
+不让内轮掉入死区或反转。比如强右修正 120 时得到左 790 / 右 550。
+因此表中的弯道基准不是最终平均占空比的硬上限：转向需求大时，为保留差速且
+不让内轮停转，平均占空比可能上移。停车、故障及输出门控关闭仍是两轮 0。
+如 55% 在地面负载下仍不起转，应先测实际死区，再在 80% 上限内调整下限；
+软件无法仅凭一个范围保证每台电机都克服静摩擦。
 
-`line_track.h` assumes a black line produces a low sensor output. Change
-`LINE_SENSOR_BLACK_ACTIVE_LOW` to `0U` if the installed modules output high over
-black. The physical left-to-right sensor order must also be checked on the car;
-the current geometry is X2, X1, X3, X4.
+直线时实时按四路探头偏差小幅调整两轮输出；微分项用 0.25 系数低通滤波，
+并限制为 ±30（±3 个占空比百分点），减轻数字探头跳变导致的摆头。
+若两轮存在固定速度差，可微调 `s_motor_command_config.straight_trim`（建议每次 ±5），
+配合线上闭环修正。当前没有编码器速度闭环，PWM 相同不代表转速严格相同。
 
-## Control stack
+## 半圆与丢线恢复
 
-```text
-PB0/PB1/PB10/PB11
-  -> line_sensor.c     raw GPIO levels
-  -> line_track.c      black bitmap and weighted deviation
-  -> pd_controller.c   proportional/derivative correction
-  -> motor_command.c   left/right software commands
-  -> line_follow.c     tracking, search, reacquire and fault state machine
-  -> vehicle_control.c output safety gate
-  -> motor_driver.c    TIM3 PWM and TB6612 direction pins
-```
+赛道依据用户提供的图以及仓库 `_k_figs/image11.png`：AB、CD 长 85 cm，
+B–C 半圆半径 60 cm，AD 长 120 cm。半圆采用每 10 ms 一次的在线差速反馈，
+不按固定时间转 180°，也不以“偏差为 0”判定已经驶出圆弧。
 
-The source files were adapted from the supplied `xunji_c8t6` project. The
-control period is 10 ms. `Modules_Poll()` calls `VehicleControl_Update()` at
-that period and publishes its result as `AppInputs.line_valid`.
+- 偏差增大时切换弯道基准；短暂居中后保持弯道速度 20 个周期（200 ms），
+  避免弧上反复加速。持续居中后，基准每周期最多增加 10（1 个百分点）。
+- 居中采样保留最后一次非零偏差的方向。短暂丢线时沿该方向以前进差速找线，
+  起步无历史且丢线则停车，不盲目搜索。
+- 重新找到线后，只平滑基础速度，差速立即使用当前偏差；不再把旧的左右轮
+  命令混入新方向，避免线已出现在另一侧时继续朝旧方向转。
+- 默认需要连续 10 个有效周期确认找回。确认前累计丢线预算不清零，偶发单次
+  检出不会无限延长搜索。累计超过 30 个丢线周期后锁存故障、输出零。
+- 全黑仍锁存故障。A/D 的直角、交叉线、宽线等需要单独的赛道事件设计，
+  本次 R60 验证不代表已经实现完整赛道自动跑圈。
 
-`Modules_Drive(APP_DRIVE_FOLLOW)` enables the motor gate. STOP, obstacle hold,
-parking, fault, and finish states disable it. The line-follow algorithm keeps
-sampling while the gate is closed, but PWM and direction outputs remain zero.
-If the board boots before it is placed on the track, the follower may latch a
-`LINE_FOLLOW_FAULT_NO_VALID_HISTORY`. Detection of a valid normal line
-automatically re-arms the follower while the motor gate stays closed.
+## 上车核对顺序
 
-## Tunable defaults
+1. 架空车轮，分别遮挡四个探头，核对上表 `raw_bits`、偏差符号与实际前进方向。
+   单左探头压线时应右轮更快，单右探头压线时应左轮更快。
+2. 在地面确认 55% 能持续驱动两轮；先测试直线，观察 `g_tracking_deviation`、
+   `g_left_applied_command`、`g_right_applied_command`。仍摆头时优先降低 Kp，
+   有固定偏航时小步调整 `straight_trim`，每次只改一个参数。
+3. 测试 AB → B–C 半圆 → CD，确认入弯、弧中短暂居中、出弯都向前。
+   必须按实际轮距、传感器间距、探头距轮轴距离及黑线宽度调参。
+4. 测试短暂离线后恢复，以及持续离线超时停车。故障/完成/手动停后按
+   [AUTO_START.md](AUTO_START.md) 的 `g_app_control_request=2` 重新布防。
 
-`control_config.h` contains provisional values copied from the supplied project:
+自动启动仍要求正常线型和新鲜、安全的超声波数据连续 200 ms；
+停止、障碍等待、故障、结束的电机门控逻辑不变。
 
-- `Kp = 1.0`, `Kd = 0.0`, correction limit `10.0`
-- base speed `20.0`, maximum forward command `100.0`
-- curve speed `16.0`, sharp-curve speed `12.0`, search speed `8.0`
-- 30 lost cycles before a fault, 10 cycles for reacquisition
+## 验证与边界
 
-These are software command units between 0 and 1000, not physical speed or a
-calibrated PWM percentage. The defaults are not validated on the assembled car
-and are likely too low for final operation. Tune them only with the wheels raised
-first, then on a test track.
+Windows：`tests/run_tests.ps1`；Linux：`sh tests/run_tests.sh`。
+测试覆盖真实 X1..X4 原始位到差速方向、内侧小修正、驱动上下限、静态微调、
+丢线保留方向、跨侧重新捕获、间歇检出不能无限搜索、停止/故障、弯速保持。
 
-`MOTOR_DRIVER_LEFT_REVERSED` and `MOTOR_DRIVER_RIGHT_REVERSED` in
-`motor_driver.h` must be used to correct motor polarity. Do not swap application
-left/right semantics to compensate for wiring.
+`tests/test_line_follow.c` 还运行 AB→R60 半圆→CD 的理想差速运动学回归，
+包括顺/逆时针、左轮响应 ±3% 和初始角度扰动。模型假设轮距 14 cm、探头前置
+8 cm、探头间距 1 cm、线宽 15 mm、轮速=0.6×占空比 m/s；这些不是已测实车数据。
+模型通过不等于实车已经通过半圆。云端未烧录，也无法验证轮胎打滑、真实死区、
+供电、传感器阈值和电机极性。
 
-## Debug variables
-
-- `g_tracking_status`, `g_tracking_bits`, `g_tracking_deviation`
-- `g_vehicle_control_state`
-- `g_left_target_command`, `g_right_target_command`
-- `g_left_applied_command`, `g_right_applied_command`
-- `g_motor_driver_left_pwm_compare`, `g_motor_driver_right_pwm_compare`
-
-## Current limits
-
-- Startup now requires a normal black-line pattern and safe, fresh sonar data
-  continuously for 200 ms; see [AUTO_START.md](AUTO_START.md). Finished/fault/stopped
-  tasks need explicit re-arming. A/B/C/D position events still have no real source.
-- A/B/C/D lap completion is not inferred from line sensors or yaw.
-- Vision, parking trajectories, and encoders are still unimplemented.
-- The TB6612 STBY pin is hardwired high, so firmware cannot provide a physical
-  standby shutdown. The driver still forces PWM and direction outputs to zero
-  on every stop/fault path.
-- Hardware behavior has not been verified on the car.
-
-## Verification
-
-The Debug and Release firmware builds compile the full line-follow and motor
-stack. `tests/test_tracking.c` covers sensor geometry, PD behavior, and motor
-command mixing. Run `tests/run_tests.ps1` when a host `gcc` is available.
+视觉、编码器速度闭环、停车轨迹、A/B/C/D 真实位置识别仍未实现。

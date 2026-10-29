@@ -23,7 +23,10 @@
 #define TRACK_2_PIN GPIO_PIN_1
 #define TRACK_3_PIN GPIO_PIN_10
 #define TRACK_4_PIN GPIO_PIN_11
-/* Raw order X1..X4 = PB0, PB1, PB10, PB11; default black level is low. */
+/* Raw order X1..X4 = PB0, PB1, PB10, PB11; default black level is low.
+ * Physical probes left-to-right: SW2, SW1, SW3, SW4.
+ * User-confirmed electrical mapping: SW1->X1, SW2->X2, SW3->X3, SW4->X4.
+ * Connector labels left-to-right: X4, X3, X2, X1 (not the probe order). */
 #define TFT_PORT GPIOB
 #define TFT_CLK_PIN GPIO_PIN_14
 #define TFT_MOSI_PIN GPIO_PIN_15

@@ -1,6 +1,7 @@
 #include "line_control.h"
 
 #include <math.h>
+#include <stddef.h>
 
 /** 完成一次采样、循迹和 PD 计算，供更高层状态机复用。 */
 LineControlResult_t LineControl_Sample(const PDControllerConfig_t *pd_config)

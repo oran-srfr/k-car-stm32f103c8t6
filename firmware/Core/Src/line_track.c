@@ -1,10 +1,6 @@
 #include "line_track.h"
 
-/* 原始位序为 X1..X4；黑线低电平，空间顺序为 X2、X1、X3、X4。 */
-#define RAW_X1_BIT       0U
-#define RAW_X2_BIT       1U
-#define RAW_X3_BIT       2U
-#define RAW_X4_BIT       3U
+/* 原始位序为 X1..X4；黑线低电平，空间顺序为 默认 X2、X1、X3、X4。 */
 #define BLACK_BITS_ALL   0x0FU
 
 /** 纯数据计算：重排并反相原始电平，区分丢线、正常和全黑状态。 */
@@ -25,11 +21,11 @@ LineTrackResult_t LineTrack_Calculate(uint8_t sensor_raw_bits)
   sensor_raw_bits ^= 0x0FU;
 #endif
 
-  /* bit0 左外 X2；bit1 左内 X1；bit2 右内 X3；bit3 右外 X4。 */
-  if ((sensor_raw_bits & (1U << RAW_X2_BIT)) == 0U) result.black_bits |= (1U << 0U);
-  if ((sensor_raw_bits & (1U << RAW_X1_BIT)) == 0U) result.black_bits |= (1U << 1U);
-  if ((sensor_raw_bits & (1U << RAW_X3_BIT)) == 0U) result.black_bits |= (1U << 2U);
-  if ((sensor_raw_bits & (1U << RAW_X4_BIT)) == 0U) result.black_bits |= (1U << 3U);
+  /* bit0 左外；bit1 左内；bit2 右内；bit3 右外（映射见 line_track.h）。 */
+  if ((sensor_raw_bits & (1U << LINE_SENSOR_LEFT_OUTER_BIT)) == 0U) result.black_bits |= (1U << 0U);
+  if ((sensor_raw_bits & (1U << LINE_SENSOR_LEFT_INNER_BIT)) == 0U) result.black_bits |= (1U << 1U);
+  if ((sensor_raw_bits & (1U << LINE_SENSOR_RIGHT_INNER_BIT)) == 0U) result.black_bits |= (1U << 2U);
+  if ((sensor_raw_bits & (1U << LINE_SENSOR_RIGHT_OUTER_BIT)) == 0U) result.black_bits |= (1U << 3U);
 
   if (result.black_bits == 0U)
   {

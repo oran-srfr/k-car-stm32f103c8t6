@@ -1,6 +1,9 @@
 # 校电赛智能小车：Agent 快速上手
 
-> 最后更新：2026-10-29
+> 最后更新：2026-10-30
+>
+> branch1pro R3：按实测 16.8 cm 轮距、10 cm 探头前伸改进转弯找线与对齐，保留直线轻纠偏。
+> 详见 [阅读说明.md](阅读说明.md) 和 [循迹说明](firmware/LINE_FOLLOW.md)。
 >
 > 当前硬件目标已从 STM32F103VET6 切换为 **STM32F103C8T6**。本文是项目内的软件与接线基线；开始改代码前先读完“未确认事项”，不要根据猜测补全引脚。
 
@@ -58,8 +61,8 @@ k_car.map  # 链接映射
 本机当前 Debug 构建基线：
 
 ```text
-FLASH: 21076 B / 64 KiB (32.16%)
-RAM:    2616 B / 20 KiB (12.77%)
+FLASH: 24348 B / 64 KiB (37.15%)
+RAM:    2704 B / 20 KiB (13.20%)
 ```
 
 ## 3. 环境配置位置
@@ -82,14 +85,14 @@ RAM:    2616 B / 20 KiB (12.77%)
 入口是 `firmware/Core/Src/main.c`。当前程序做以下事情：
 
 1. `HAL_Init()` 初始化 HAL 与 SysTick。
-2. 使用内部 HSI 8 MHz，不假设外部晶振频率。
+2. 使用内部 HSI / 2 × PLL16 = 64 MHz，不依赖外部晶振。
 3. `App_Init()` 初始化超声波、四路循迹/TIM3 电机、TFT/HCI 和 USART2 姿态链路。
-4. 主循环调用 `App_Task()`；循迹控制按 10 ms 更新，屏幕每 100 ms 刷新。
-5. 每秒递增 `heartbeat_count`；可用调试器查看 `system_clock_hz`（当前应为 `8000000`）。
+4. 主循环调用 `App_Task()`；循迹控制按 1 ms 更新，屏幕每 100 ms 刷新。
+5. 每秒递增 `heartbeat_count`；可用调试器查看 `system_clock_hz`（当前应为 `64000000`）。
 
 `firmware/Core/Inc/stm32f1xx_hal_conf.h` 当前启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC、UART 模块。新增 ADC、I2C、硬件 SPI 或 HAL TIM 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
 
-TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，实车探头从左到右 SW2、SW1、SW3、SW4（接线口排列不是探头顺序）。当前生产控制使用 1 ms 四路硬状态机：内侧使用 500/700 差速，外侧使用 500/770，四灯全灭先慢速直行再差速搜索；滤波 PD 保留为可编译回退模式。正常线型连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
+TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，实车探头从左到右 SW2、SW1、SW3、SW4（接线口排列不是探头顺序）。当前生产控制使用 1 ms 四路硬状态机：内侧从 555/605 轻纠偏逐步加强至 480/680 差速，短暂外侧使用 320/940，确认急弯后使用 0/800 或 800/0 找线，进入对齐阶段后按当前线位置纠偏，确认稳定再逐步恢复速度；普通四灯全灭保留慢速直行再差速搜索；滤波 PD 保留为可编译回退模式。正常线型连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
 
 工程没有 CubeMX `.ioc`，是手工组织的 CMake 工程。不要用其他板型的 CubeMX 输出直接覆盖现有目录。
 

@@ -24,7 +24,8 @@ static bool VehicleControl_StateAllowsMotion(LineFollowState_t state)
   return (state == LINE_FOLLOW_TRACKING) ||
          (state == LINE_FOLLOW_LINE_LOST) ||
          (state == LINE_FOLLOW_SEARCHING) ||
-         (state == LINE_FOLLOW_REACQUIRE);
+         (state == LINE_FOLLOW_REACQUIRE) ||
+         (state == LINE_FOLLOW_TURNING);
 }
 
 static bool VehicleControl_CommandIsValid(float command)

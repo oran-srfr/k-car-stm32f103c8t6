@@ -15,6 +15,20 @@ static uint16_t s_reacquire_cycles = 0U;
 static float s_previous_base_speed = 0.0f;
 static float s_reacquire_start_base = 0.0f;
 static uint16_t s_curve_hold_cycles = 0U;
+#if LINE_FOLLOW_DISCRETE_MODE
+static int8_t s_turn_direction = 0;
+static int8_t s_outer_direction = 0;
+static uint16_t s_outer_cycles = 0U;
+static uint16_t s_turn_cycles = 0U;
+static uint16_t s_turn_all_black_cycles = 0U;
+static int8_t s_inner_direction = 0;
+static float s_inner_correction = 0.0f;
+static uint16_t s_turn_align_cycles = 0U;
+static LineFollowTurnPhase_t s_turn_phase = LINE_FOLLOW_TURN_NONE;
+static float s_resume_base = 0.0f;
+static bool s_turn_departed = false;
+static int8_t s_align_search_direction = 0;
+#endif
 #if !LINE_FOLLOW_DISCRETE_MODE
 static int8_t s_error_direction = 0;
 static uint8_t s_error_direction_cycles = 0U;
@@ -38,6 +52,20 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_previous_base_speed = 0.0f;
   s_reacquire_start_base = 0.0f;
   s_curve_hold_cycles = 0U;
+#if LINE_FOLLOW_DISCRETE_MODE
+  s_turn_direction = 0;
+  s_outer_direction = 0;
+  s_outer_cycles = 0U;
+  s_turn_cycles = 0U;
+  s_turn_all_black_cycles = 0U;
+  s_inner_direction = 0;
+  s_inner_correction = 0.0f;
+  s_turn_align_cycles = 0U;
+  s_turn_phase = LINE_FOLLOW_TURN_NONE;
+  s_resume_base = 0.0f;
+  s_turn_departed = false;
+  s_align_search_direction = 0;
+#endif
 #if !LINE_FOLLOW_DISCRETE_MODE
   s_error_direction = 0;
   s_error_direction_cycles = 0U;
@@ -198,6 +226,162 @@ static void LineFollow_UpdateLastDeviation(float deviation)
    * direction for short gaps on an arc; Start/Stop explicitly clear it. */
 }
 
+#if LINE_FOLLOW_DISCRETE_MODE
+static void LineFollow_ResetInnerSteering(void)
+{
+  s_inner_direction = 0;
+  s_inner_correction = 0.0f;
+}
+
+static void LineFollow_HandleInner(int8_t direction,
+                                   const MotorCommandConfig_t *motor_config,
+                                   LineFollowResult_t *result)
+{
+  float limit = 0.5f * (LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT -
+                        LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT);
+  MotorCommandResult_t motor;
+  MotorCommandConfig_t config = *motor_config;
+
+  if (direction == 0) {
+    /* Remove steering immediately at center; filtering old commands here
+     * would keep pushing the car across the line. */
+    LineFollow_ResetInnerSteering();
+  } else if (direction != s_inner_direction) {
+    s_inner_direction = direction;
+    s_inner_correction = LINE_FOLLOW_INNER_INITIAL_CORRECTION;
+  } else {
+    s_inner_correction += LINE_FOLLOW_INNER_CORRECTION_STEP;
+  }
+  if (s_inner_correction > limit) {
+    s_inner_correction = limit;
+  }
+  /* Reuse limits and straight trim for both centered and inner-probe input. */
+  if (s_resume_base >= config.base_speed) {
+    s_resume_base = 0.0f;
+  } else if (s_resume_base > 0.0f) {
+    s_resume_base += LINE_FOLLOW_TURN_EXIT_STEP;
+    if (s_resume_base < config.base_speed) {
+      config.base_speed = fmaxf(s_resume_base, config.min_forward_command);
+    } else {
+      s_resume_base = 0.0f;
+    }
+  }
+  motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
+                                 (float)direction * s_inner_correction,
+                                 &config);
+  result->left_command = motor.left_command;
+  result->right_command = motor.right_command;
+}
+
+static void LineFollow_BeginTurn(int8_t direction)
+{
+  LineFollow_ResetInnerSteering();
+  s_state = LINE_FOLLOW_TURNING;
+  s_turn_direction = direction;
+  s_turn_cycles = 0U;
+  s_turn_all_black_cycles = 0U;
+  s_reacquire_cycles = 0U;
+  s_lost_cycles = 0U;
+  s_turn_phase = LINE_FOLLOW_TURN_SEEK;
+  s_turn_align_cycles = 0U;
+  s_resume_base = 0.0f;
+  s_turn_departed = false;
+  s_align_search_direction = direction;
+}
+
+/* Keep the entry direction while seeking; once the line appears, align
+ * using current sensor feedback before restoring the straight-line speed. */
+static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
+                                   LineFollowResult_t *result)
+{
+  uint8_t bits = result->control.track.black_bits;
+  float align_base = fminf(LINE_FOLLOW_TURN_ALIGN_COMMAND,
+                           follow_config->curve_speed);
+  bool inner_only = (bits & (SENSOR_LEFT_INNER_MASK |
+                            SENSOR_RIGHT_INNER_MASK)) != 0U &&
+                  (bits & (SENSOR_LEFT_OUTER_MASK |
+                            SENSOR_RIGHT_OUTER_MASK)) == 0U;
+
+  if (++s_turn_cycles > LINE_FOLLOW_TURN_MAX_CYCLES) {
+    LineFollow_SetFault(LINE_FOLLOW_FAULT_TURN_TIMEOUT, result);
+    return;
+  }
+  if ((bits & (SENSOR_LEFT_INNER_MASK | SENSOR_RIGHT_INNER_MASK)) !=
+      (SENSOR_LEFT_INNER_MASK | SENSOR_RIGHT_INNER_MASK)) {
+    s_turn_departed = true;
+  }
+  if (result->control.track.status == LINE_TRACK_STATUS_ALL_BLACK) {
+    if (++s_turn_all_black_cycles > LINE_FOLLOW_TURN_ALL_BLACK_CYCLES) {
+      LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, result);
+      return;
+    }
+  } else {
+    s_turn_all_black_cycles = 0U;
+  }
+  if (result->control.track.status == LINE_TRACK_STATUS_LOST) {
+    if (++s_lost_cycles > LINE_FOLLOW_TURN_MAX_LOST_CYCLES) {
+      LineFollow_SetFault(LINE_FOLLOW_FAULT_LOST_TIMEOUT, result);
+      return;
+    }
+  }
+
+  if (inner_only && s_turn_cycles >= LINE_FOLLOW_TURN_MIN_CYCLES) {
+    s_turn_phase = LINE_FOLLOW_TURN_ALIGN;
+  }
+  if (s_turn_phase == LINE_FOLLOW_TURN_ALIGN) {
+    ++s_turn_align_cycles;
+  }
+
+  if (inner_only && s_turn_departed &&
+      s_turn_align_cycles >= LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES) {
+    if (s_reacquire_cycles < UINT16_MAX) {
+      ++s_reacquire_cycles;
+    }
+    if (s_reacquire_cycles >= LINE_FOLLOW_TURN_REACQUIRE_CYCLES) {
+      s_state = LINE_FOLLOW_TRACKING;
+      s_turn_direction = 0;
+      s_outer_direction = 0;
+      s_outer_cycles = 0U;
+      s_lost_cycles = 0U;
+      s_reacquire_cycles = 0U;
+      LineFollow_UpdateLastDeviation(result->control.track.deviation);
+      s_turn_phase = LINE_FOLLOW_TURN_NONE;
+      s_resume_base = align_base;
+      result->left_command = s_resume_base;
+      result->right_command = s_resume_base;
+      result->base_speed = s_resume_base;
+      return;
+    }
+  } else {
+    s_reacquire_cycles = 0U;
+  }
+
+  if (s_turn_phase == LINE_FOLLOW_TURN_ALIGN &&
+      result->control.track.status == LINE_TRACK_STATUS_NORMAL) {
+    /* Once the outgoing line appears, steer using its CURRENT position.
+     * Continuing the entry pivot here sweeps across it; immediately restoring
+     * straight speed instead can throw the car off before it is aligned. */
+    float correction = LINE_FOLLOW_TURN_ALIGN_CORRECTION *
+                       result->control.track.deviation;
+    if (result->control.track.deviation != 0.0f) {
+      s_align_search_direction = (result->control.track.deviation < 0.0f) ? -1 : 1;
+    }
+    result->left_command = align_base + correction;
+    result->right_command = align_base - correction;
+  } else {
+    int8_t search_direction = (s_turn_phase == LINE_FOLLOW_TURN_ALIGN) ?
+                              s_align_search_direction : s_turn_direction;
+    result->left_command = (search_direction < 0) ?
+                         LINE_FOLLOW_TURN_INNER_COMMAND :
+                         LINE_FOLLOW_TURN_OUTER_COMMAND;
+    result->right_command = (search_direction < 0) ?
+                          LINE_FOLLOW_TURN_OUTER_COMMAND :
+                          LINE_FOLLOW_TURN_INNER_COMMAND;
+  }
+  result->base_speed = 0.5f * (result->left_command + result->right_command);
+}
+#endif
+
 static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
                                   const LineFollowConfig_t *follow_config,
                                   LineFollowResult_t *result)
@@ -231,6 +415,14 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_reacquire_cycles = 0U;
 #if LINE_FOLLOW_DISCRETE_MODE
   {
+    LineFollow_ResetInnerSteering();
+    /* The outer probe saw the departure side just before the gap. Do not
+     * insert a straight-ahead interval or forget that side at a corner. */
+    if (s_outer_direction != 0) {
+      LineFollow_BeginTurn(s_outer_direction);
+      LineFollow_HandleTurn(follow_config, result);
+      return;
+    }
     int8_t direction = (s_last_valid_direction != 0) ?
                        s_last_valid_direction : 1;
     float fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
@@ -272,14 +464,31 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   bool left_inner = (bits & SENSOR_LEFT_INNER_MASK) != 0U;
   bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
   bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
-  float inner_fast = LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT;
   float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
   float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
   float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
-  float straight = motor_config->base_speed;
 
-  (void)follow_config;
   LineFollow_UpdateLastDeviation(result->control.track.deviation);
+  if (left_outer != right_outer) {
+    int8_t direction = left_outer ? -1 : 1;
+    if (direction == s_outer_direction) {
+      if (s_outer_cycles < UINT16_MAX) {
+        ++s_outer_cycles;
+      }
+    } else {
+      s_outer_direction = direction;
+      s_outer_cycles = 1U;
+    }
+    if ((left_inner && right_inner) ||
+        (s_outer_cycles >= LINE_FOLLOW_TURN_TRIGGER_CYCLES)) {
+      LineFollow_BeginTurn(direction);
+      LineFollow_HandleTurn(follow_config, result);
+      return;
+    }
+  } else {
+    s_outer_direction = 0;
+    s_outer_cycles = 0U;
+  }
   s_state = LINE_FOLLOW_TRACKING;
   s_fault = LINE_FOLLOW_FAULT_NONE;
   s_lost_cycles = 0U;
@@ -287,7 +496,8 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   s_curve_hold_cycles = 0U;
 
   if (left_outer || right_outer) {
-    /* Outer probe wins: use a larger two-wheel differential, never zero. */
+    LineFollow_ResetInnerSteering();
+    /* Brief outer-probe hits still use the ordinary curve differential. */
     if (left_outer && right_outer) {
       result->left_command = inner_slow;
       result->right_command = inner_slow;
@@ -298,17 +508,10 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
       result->left_command = outer_fast;
       result->right_command = outer_slow;
     }
-  } else if (left_inner && right_inner) {
-    result->left_command = straight;
-    result->right_command = straight;
-  } else if (left_inner) {
-    /* Line on the left: left wheel slower, right wheel faster. */
-    result->left_command = inner_slow;
-    result->right_command = inner_fast;
-  } else if (right_inner) {
-    /* Line on the right: left wheel faster, right wheel slower. */
-    result->left_command = inner_fast;
-    result->right_command = inner_slow;
+  } else if (left_inner || right_inner) {
+    int8_t direction = (int8_t)((right_inner ? 1 : 0) -
+                                (left_inner ? 1 : 0));
+    LineFollow_HandleInner(direction, motor_config, result);
   } else {
     result->left_command = inner_slow;
     result->right_command = inner_slow;
@@ -434,14 +637,20 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
   {
     /* 故障锁存，必须重新 Start 或先 Stop 后再 Start。 */
   }
-  else if (result.control.track.status == LINE_TRACK_STATUS_ALL_BLACK)
-  {
-    LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, &result);
-  }
   else if ((LineFollow_ConfigIsValid(motor_config, follow_config) == 0U) ||
            (result.control.control_status == LINE_CONTROL_STATUS_INVALID_INPUT_STOP))
   {
     LineFollow_SetFault(LINE_FOLLOW_FAULT_INVALID_INPUT, &result);
+  }
+#if LINE_FOLLOW_DISCRETE_MODE
+  else if (s_state == LINE_FOLLOW_TURNING)
+  {
+    LineFollow_HandleTurn(follow_config, &result);
+  }
+#endif
+  else if (result.control.track.status == LINE_TRACK_STATUS_ALL_BLACK)
+  {
+    LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, &result);
   }
   else if (result.control.track.status == LINE_TRACK_STATUS_LOST)
   {
@@ -464,6 +673,13 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
   result.last_valid_direction = s_last_valid_direction;
   result.lost_cycles = s_lost_cycles;
   result.reacquire_cycles = s_reacquire_cycles;
+#if LINE_FOLLOW_DISCRETE_MODE
+  result.turn_phase = s_turn_phase;
+  result.turn_cycles = s_turn_cycles;
+#else
+  result.turn_phase = LINE_FOLLOW_TURN_NONE;
+  result.turn_cycles = 0U;
+#endif
   s_latest_output = result;
   return result;
 }

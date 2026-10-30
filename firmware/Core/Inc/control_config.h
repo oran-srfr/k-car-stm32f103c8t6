@@ -39,25 +39,38 @@
 #define LINE_FOLLOW_HARD_TURN_DEVIATION              (1.5f)
 #define LINE_FOLLOW_HARD_TURN_MIN_FORWARD            (450.0f)
 #define LINE_FOLLOW_HARD_TURN_GAIN                   (1.25f)
-/* Direct four-sensor recovery uses a two-wheel differential at all times.
- * 2026-10 修正①：原来 500/700（差速 20%）、500/770（27%），力度是常数、与偏差无关。
- * 2026-10 修正②：一度拉到 380/830（差速 45%），结果直线摆头 —— 过冲。
- * 2026-10 修正③（治摆头）：单内探头 480/680，差速降到 200。
- *   几何依据：R = (W/2)·(v1+v2)/(v1-v2)，W=150mm 时
- *     差速 450 → 半径 19cm（远超需要，必然冲过头）
- *     差速 200 → 半径 43cm（刚好跟上 R60 半圆，直线也不会画龙）
- *     差速 145 → 半径 60cm（R60 的临界值，没有余量）
- *   外侧保留大差速 320/940，专治直角与急弯 —— 外侧探头压线说明偏差已经很大，
- *   此时才需要半径 14cm 的猛转。只压内探头时给猛转就是摆头的根源。
- * 若仍轻微摆头 → _INNER 继续收到 500/660；若弧线跟不上 → 放到 450/710。 */
+/* Discrete steering: the INNER pair sets the sustained correction limit.
+ * Short inner-probe errors use the gentle ramp below; outer probes bypass
+ * that ramp and retain the existing sharp-turn detection and recovery. */
 #define LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT       (680.0f)
 #define LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT       (480.0f)
+/* Single-inner corrections start gently. Only a persistent same-side error
+ * ramps to half the INNER_FAST/INNER_SLOW difference (100 by default).
+ * Center, direction reversal, outer probes and recovery clear the ramp. */
+#define LINE_FOLLOW_INNER_INITIAL_CORRECTION         (25.0f)
+#define LINE_FOLLOW_INNER_CORRECTION_STEP             (1.0f)
 #define LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT       (940.0f)
 #define LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT       (320.0f)
 /* 四灯全灭时先「直行」多少个控制周期再开始差速搜索。
  * 80 周期 ≈ 80 ms —— 丢线后还要直冲 80 ms 才肯找线，弯道上这就是「反应慢」。
  * 收到 25 周期（≈25 ms），一丢线几乎立刻开始朝最后方向找。 */
 #define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (25U)
+/* Sharp turns: stop the inside wheel while seeking the line.
+ * Confirm an outer probe for 3 ms; a three-probe corner pattern or an
+ * outer-probe -> lost transition starts the turn immediately. */
+#define LINE_FOLLOW_TURN_OUTER_COMMAND                (800.0f)
+#define LINE_FOLLOW_TURN_INNER_COMMAND                (0.0f)
+#define LINE_FOLLOW_TURN_TRIGGER_CYCLES               (3U)
+#define LINE_FOLLOW_TURN_MIN_CYCLES                   (60U)
+#define LINE_FOLLOW_TURN_MAX_CYCLES                   (4500U)
+#define LINE_FOLLOW_TURN_MAX_LOST_CYCLES              (3000U)
+#define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (500U)
+#define LINE_FOLLOW_TURN_ALIGN_COMMAND               (560.0f)
+#define LINE_FOLLOW_TURN_ALIGN_CORRECTION            (100.0f)
+#define LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES             (200U)
+#define LINE_FOLLOW_TURN_REACQUIRE_CYCLES             (30U)
+#define LINE_FOLLOW_TURN_EXIT_STEP                   (1.0f)
+#define FIRMWARE_REVISION_TEXT                       "R3"
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)
 #endif

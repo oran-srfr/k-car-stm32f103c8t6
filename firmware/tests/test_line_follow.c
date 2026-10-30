@@ -51,10 +51,10 @@ static LineFollowResult_t step(uint8_t bits)
 static void moving(LineFollowResult_t r)
 {
     assert(r.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.left_command <= 800.0f);
-    assert(r.right_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.right_command <= 800.0f);
+    assert(r.left_command >= motor.min_forward_command);
+    assert(r.left_command <= motor.max_forward_command);
+    assert(r.right_command >= motor.min_forward_command);
+    assert(r.right_command <= motor.max_forward_command);
 }
 
 static void stopped(LineFollowResult_t r)
@@ -80,7 +80,8 @@ static void test_geometry_and_small_corrections(void)
     (void)step(CENTER);
     LineFollowResult_t r = step(LEFT_INNER);
     assert(r.right_command - r.left_command > 100.0f);
-    assert(r.right_command - r.left_command < 200.0f);
+    assert(fabsf(r.control.pd.output) < pd.output_limit);
+    assert(r.right_command - r.left_command <= 2.0f * pd.output_limit);
     moving(r);
     r = step(CENTER);
     assert(fabsf(r.control.pd.output) <= CONTROL_PD_D_TERM_LIMIT);
@@ -133,7 +134,7 @@ static void test_progressive_steering(void)
     assert(fabsf(r.left_command - r.right_command) > initial_differential);
     assert(r.left_command < r.right_command);
     assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.right_command <= 800.0f);
+    assert(r.right_command <= motor.max_forward_command);
 }
 
 static void test_stops_and_curve_hold(void)
@@ -187,7 +188,8 @@ static void test_r60_arc(float left_gain, float initial_heading, float mirror)
     float max_distance = 0.0f;
     unsigned cycles;
     LineFollow_Start();
-    for (cycles = 0; cycles < 6000; ++cycles) {
+    const unsigned max_cycles = (unsigned)(60.0f / CONTROL_PERIOD_SECONDS);
+    for (cycles = 0; cycles < max_cycles; ++cycles) {
         uint8_t black = 0;
         /* Physical left-to-right sensor positions, independent of connector order. */
         for (unsigned bit = 0; bit < 4; ++bit) {
@@ -210,7 +212,7 @@ static void test_r60_arc(float left_gain, float initial_heading, float mirror)
     }
     printf("R60 model: motor gain %.2f, heading %.2f, turn %+.0f: %u steps, max axle error %.1f mm\n",
            left_gain, initial_heading, mirror, cycles, max_distance * 1000.0f);
-    assert(cycles < 6000);
+    assert(cycles < max_cycles);
     assert(max_distance < 0.04f);
     assert(cosf(heading) < -0.95f);
 }

@@ -113,10 +113,12 @@ bit1=X2/PB1，bit2=X3/PB10，bit3=X4/PB11，可用逐个遮挡探头确认对应
 | `LINE_FOLLOW_INNER_INITIAL_CORRECTION` | 25 | 内侧首次单轮修正量 |
 | `LINE_FOLLOW_INNER_CORRECTION_STEP` | 1 | 同方向每周期增加的单轮修正量 |
 | `LINE_FOLLOW_TURN_COMMAND` | 600 | 转弯外轮命令 |
-| `LINE_FOLLOW_TURN_TRIGGER_CYCLES` | 6 | 持续外侧命中确认 |
+| `LINE_FOLLOW_TURN_TRIGGER_CYCLES` | 3 | 持续外侧命中确认 |
 | `LINE_FOLLOW_TURN_MIN_CYCLES` | 60 | 最早允许判断出弯的周期 |
 | `LINE_FOLLOW_TURN_MAX_CYCLES` | 1200 | 总转弯超时 |
 | `LINE_FOLLOW_TURN_ALL_BLACK_CYCLES` | 150 | 急弯中连续全黑上限 |
+| `LINE_FOLLOW_TURN_OUTER_COMMAND` | 950 | 外轮强转向速度 |
+| `LINE_FOLLOW_TURN_INNER_COMMAND` | 350 | 内轮保持转动的最低转向速度 |
 
 架空轮子时，左侧转角图样应让物理左轮停、右轮前进，右转反之。
 沿用原分支的 `MOTOR_DRIVER_SWAP_LEFT_RIGHT`，不要仅凭连接器名称调整映射。

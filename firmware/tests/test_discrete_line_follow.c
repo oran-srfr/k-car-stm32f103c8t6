@@ -95,8 +95,11 @@ static void expect_turn(LineFollowResult_t r, int direction)
 {
     assert(r.state == LINE_FOLLOW_TURNING);
     assert(r.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(r.left_command == (direction < 0 ? 0.0f : LINE_FOLLOW_TURN_COMMAND));
-    assert(r.right_command == (direction < 0 ? LINE_FOLLOW_TURN_COMMAND : 0.0f));
+    assert(r.left_command == (direction < 0 ? LINE_FOLLOW_TURN_INNER_COMMAND :
+                                             LINE_FOLLOW_TURN_OUTER_COMMAND));
+    assert(r.right_command == (direction < 0 ? LINE_FOLLOW_TURN_OUTER_COMMAND :
+                                              LINE_FOLLOW_TURN_INNER_COMMAND));
+    assert(r.left_command > 0.0f && r.right_command > 0.0f);
 }
 
 static void test_inner_steering(void)
@@ -242,7 +245,8 @@ static void test_vehicle_turn_gating(void)
     VehicleControl_Update();
     VehicleControlOutput_t out = VehicleControl_GetOutput();
     assert(out.line_output_valid && out.line_follow.state == LINE_FOLLOW_TURNING);
-    assert(out.left_applied_command == 0 && out.right_applied_command == (int16_t)LINE_FOLLOW_TURN_COMMAND);
+    assert(out.left_applied_command == (int16_t)LINE_FOLLOW_TURN_INNER_COMMAND);
+    assert(out.right_applied_command == (int16_t)LINE_FOLLOW_TURN_OUTER_COMMAND);
     raw_bits = physical_to_raw(0U);
     VehicleControl_Update();
     assert(VehicleControl_GetOutput().line_output_valid); /* a corner gap is allowed */

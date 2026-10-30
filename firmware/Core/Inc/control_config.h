@@ -55,11 +55,12 @@
  * 80 周期 ≈ 80 ms —— 丢线后还要直冲 80 ms 才肯找线，弯道上这就是「反应慢」。
  * 收到 25 周期（≈25 ms），一丢线几乎立刻开始朝最后方向找。 */
 #define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (25U)
-/* Sharp turns: stop the inside wheel, drive the outside wheel forward.
- * Confirm an outer probe for 6 ms; a three-probe corner pattern or an
+/* Sharp turns: keep both wheels moving with a strong differential.
+ * Confirm an outer probe for 3 ms; a three-probe corner pattern or an
  * outer-probe -> lost transition starts the turn immediately. */
-#define LINE_FOLLOW_TURN_COMMAND                     (600.0f)
-#define LINE_FOLLOW_TURN_TRIGGER_CYCLES               (6U)
+#define LINE_FOLLOW_TURN_OUTER_COMMAND                (950.0f)
+#define LINE_FOLLOW_TURN_INNER_COMMAND                (350.0f)
+#define LINE_FOLLOW_TURN_TRIGGER_CYCLES               (3U)
 #define LINE_FOLLOW_TURN_MIN_CYCLES                   (60U)
 #define LINE_FOLLOW_TURN_MAX_CYCLES                   (1200U)
 #define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (150U)

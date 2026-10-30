@@ -315,9 +315,14 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
     s_reacquire_cycles = 0U;
   }
 
-  result->left_command = (s_turn_direction < 0) ? 0.0f : LINE_FOLLOW_TURN_COMMAND;
-  result->right_command = (s_turn_direction < 0) ? LINE_FOLLOW_TURN_COMMAND : 0.0f;
-  result->base_speed = 0.5f * LINE_FOLLOW_TURN_COMMAND;
+  result->left_command = (s_turn_direction < 0) ?
+                         LINE_FOLLOW_TURN_INNER_COMMAND :
+                         LINE_FOLLOW_TURN_OUTER_COMMAND;
+  result->right_command = (s_turn_direction < 0) ?
+                          LINE_FOLLOW_TURN_OUTER_COMMAND :
+                          LINE_FOLLOW_TURN_INNER_COMMAND;
+  result->base_speed = 0.5f * (LINE_FOLLOW_TURN_OUTER_COMMAND +
+                               LINE_FOLLOW_TURN_INNER_COMMAND);
 }
 #endif
 

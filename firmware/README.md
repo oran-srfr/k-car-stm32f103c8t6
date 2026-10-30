@@ -28,7 +28,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 
 ## 当前程序
 
-`Core/Src/main.c` 使用 8 MHz HSE，经 PLL ×9 运行在 72 MHz。`App_Init()`
+`Core/Src/main.c` 使用内部 HSI 8 MHz 时钟，不依赖开发板外部晶振。`App_Init()`
 会初始化 HC-SR04、四路循迹/TIM3 电机、ST7735/HCI 和 USART2 姿态模块；`App_Task()`
 在主循环中测距、按 10 ms 更新循迹、接收 MPU6050 角度帧、运行圈计时并每 100 ms
 刷新屏幕。蜂鸣器、循迹和电机控制已接入，说明见 [BUZZER.md](BUZZER.md) 和

@@ -82,14 +82,14 @@ RAM:    2616 B / 20 KiB (12.77%)
 入口是 `firmware/Core/Src/main.c`。当前程序做以下事情：
 
 1. `HAL_Init()` 初始化 HAL 与 SysTick。
-2. 使用 8 MHz HSE 经 PLL ×9 运行在 72 MHz，APB1 为 36 MHz、APB2 为 72 MHz。
+2. 使用内部 HSI 8 MHz，不假设外部晶振频率。
 3. `App_Init()` 初始化超声波、四路循迹/TIM3 电机、TFT/HCI 和 USART2 姿态链路。
 4. 主循环调用 `App_Task()`；循迹控制按 10 ms 更新，屏幕每 100 ms 刷新。
 5. 每秒递增 `heartbeat_count`；可用调试器查看 `system_clock_hz`（当前应为 `8000000`）。
 
 `firmware/Core/Inc/stm32f1xx_hal_conf.h` 当前启用 HAL、Cortex、DMA、EXTI、Flash、GPIO、PWR、RCC、UART 模块。新增 ADC、I2C、硬件 SPI 或 HAL TIM 功能时，除了启用对应 HAL 模块，还要把驱动源文件加入 `firmware/CMakeLists.txt`。
 
-TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，实车探头从左到右 SW2、SW1、SW3、SW4（接线口排列不是探头顺序）。当前生产控制检测任一原始探头电平变化后立即更新：内侧使用 450/700 差速，外侧使用 450/770，四灯全灭先慢速直行再差速搜索；滤波 PD 保留为可编译回退模式。正常线型连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
+TFT 显示五项数据，其中两圈耗时来自 MPU6050 + `LapTimer`，三个识别计数来自 `AppStatus`。USART2 使用 PA2/PA3、115200 8N1；中断只入环形缓冲，解析和浮点运算在主循环执行。四路循迹输入为 PB0/PB1/PB10/PB11，实车探头从左到右 SW2、SW1、SW3、SW4（接线口排列不是探头顺序）。当前生产控制使用 1 ms 四路硬状态机：内侧使用 500/700 差速，外侧使用 500/770，四灯全灭先慢速直行再差速搜索；滤波 PD 保留为可编译回退模式。正常线型连续满足 200 ms 后自动起步；终点、故障和手动停车后锁定，详见 [firmware/AUTO_START.md](firmware/AUTO_START.md)。A/B/C/D 实际位置识别仍未实现。
 
 工程没有 CubeMX `.ioc`，是手工组织的 CMake 工程。不要用其他板型的 CubeMX 输出直接覆盖现有目录。
 
@@ -145,7 +145,7 @@ PA11 与 USB_DM/CAN_RX 复用，PB9 与 TIM4_CH4/可选 TFT 背光复用。若 P
 3. **编码器只有 A 相已接线。** PA8、PB12 只能做脉冲计数，当前无法从编码器判断方向，也不能做硬件正交解码。若需要方向，必须重新规划 B 相和/或定时器资源。
 4. **外部引脚表末尾的 OLED 备注已过时。** PB12 已分配给右编码器 A 相，PB13 预留给 TFT 字库，不应再占用。
 5. **TFT 背光默认常亮。** 只有决定使用 PB9 调光时，才把它从“空闲”改为 TFT 背光。
-6. **系统时钟已切换为外部 8 MHz HSE 和 72 MHz PLL。** 若更换板型或晶振，必须同步修改 `HSE_VALUE`、PLL 倍频和 Flash latency。
+6. **时钟尚未使用外部晶振。** 若后续要跑 72 MHz，应先确认板上 HSE 晶振频率和起振情况，再改 PLL/Flash latency。
 
 ## 7. 资源约束
 

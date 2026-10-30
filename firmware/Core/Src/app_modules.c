@@ -12,6 +12,14 @@
 #include "vehicle_control.h"
 #include "stm32f1xx_hal.h"
 
+/* ============================================================================
+ * 屏幕调试信息开关（详见 Debug_Display 上方的说明）
+ *
+ *   0 = 只显示变化缓慢的状态字段（默认，几乎零开销）
+ *   1 = 额外显示黑线位图和左右轮实际输出，会每 100ms 重画一次，明显拖慢控制
+ * ========================================================================== */
+#define DEBUG_LCD_FULL   0
+
 static PDControllerConfig_t s_pd_config = {
     CONTROL_KP_DEFAULT,
     CONTROL_KD_DEFAULT,
@@ -34,7 +42,6 @@ static LineFollowConfig_t s_line_follow_config = {
     LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
 };
 static uint32_t s_last_control_ms;
-static uint8_t s_last_sensor_raw_bits = 0xFFU;
 static char s_debug_line[2][17];
 
 volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
@@ -71,13 +78,8 @@ static void Mpu_Poll(uint32_t now_ms)
 static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
 {
     VehicleControlOutput_t vehicle;
-    LineSensorRaw_t raw = LineSensor_ReadRaw();
-    uint8_t raw_bits = (uint8_t)(raw.x1 | (raw.x2 << 1U) |
-                                 (raw.x3 << 2U) | (raw.x4 << 3U));
 
-    if ((raw_bits != s_last_sensor_raw_bits) ||
-        ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS)) {
-        s_last_sensor_raw_bits = raw_bits;
+    if ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS) {
         s_last_control_ms = now_ms;
         VehicleControl_Update();
     }
@@ -113,7 +115,6 @@ void Modules_Init(void)
     VehicleControl_Init(&s_pd_config, &s_motor_command_config, &s_line_follow_config);
     VehicleControl_Start();
     s_last_control_ms = HAL_GetTick();
-    s_last_sensor_raw_bits = 0xFFU;
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);
@@ -217,6 +218,7 @@ static void DebugLine_AppendU16(char *line, uint16_t value, uint8_t width)
     }
 }
 
+#if DEBUG_LCD_FULL
 static void DebugLine_AppendHex8(char *line, uint8_t value)
 {
     static const char digits[] = "0123456789ABCDEF";
@@ -230,6 +232,7 @@ static void DebugLine_AppendHex8(char *line, uint8_t value)
         line[pos + 1U] = digits[value & 0x0FU];
     }
 }
+#endif
 
 static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
                            uint16_t color)
@@ -247,11 +250,20 @@ static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
     }
 }
 
+/* ============================================================================
+ * 屏幕调试信息
+ *
+ * 软件 SPI 刷屏很贵：一个 8x16 字符 = 128 像素 = 256 字节 = 2048 次电平翻转。
+ * 16 个字符一行 ≈ 1.2M 周期，8MHz 下约 175ms、64MHz 下约 22ms。
+ *
+ * 所以默认只显示「变化缓慢」的字段（S/E/L/O），平时不动 → 脏标记挡住重绘
+ * → 几乎零开销。DEBUG_LCD_FULL=1 才显示会持续变化的内容。
+ * ========================================================================== */
 static void Debug_Display(const AppStatus *status)
 {
     char line[17];
 
-    /* S/E: app state/error; L/B: line status/black bitmap; O/D: output/driver. */
+    /* 只放变化缓慢的字段：状态、错误、循迹状态、输出使能 */
     DebugLine_Clear(line);
     DebugLine_Append(line, "S");
     DebugLine_AppendU16(line, (uint16_t)status->state, 1U);
@@ -259,20 +271,22 @@ static void Debug_Display(const AppStatus *status)
     DebugLine_AppendU16(line, (uint16_t)status->error, 1U);
     DebugLine_Append(line, "L");
     DebugLine_AppendU16(line, (uint16_t)g_tracking_status, 1U);
-    DebugLine_Append(line, "B");
-    DebugLine_AppendHex8(line, g_tracking_bits);
     DebugLine_Append(line, "O");
     DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
-    DebugLine_Append(line, "D");
-    DebugLine_AppendU16(line, g_motor_driver_enabled ? 1U : 0U, 1U);
     DebugLine_Show(112U, 0U, line, WHITE);
 
+#if DEBUG_LCD_FULL
+    /* 下面两个字段随车运动持续变化，重绘代价很高（见文件开头的说明） */
     DebugLine_Clear(line);
-    DebugLine_Append(line, "A");
-    DebugLine_AppendU16(line, (uint16_t)g_motor_driver_left_actual, 4U);
-    DebugLine_Append(line, "/");
-    DebugLine_AppendU16(line, (uint16_t)g_motor_driver_right_actual, 4U);
-    DebugLine_Show(132U, 1U, line, GREEN);
+    DebugLine_Append(line, "B");
+    DebugLine_AppendHex8(line, g_tracking_bits);
+    DebugLine_Append(line, "D");
+    DebugLine_AppendU16(line, g_motor_driver_enabled ? 1U : 0U, 1U);
+    DebugLine_Show(132U, 1U, line, YELLOW);
+#else
+    /* 关闭时让第 2 行保持空白，避免留下上一次的残影 */
+    (void)g_tracking_bits;
+#endif
 }
 
 void Modules_Display(const AppStatus *status)

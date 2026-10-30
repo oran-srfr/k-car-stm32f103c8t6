@@ -95,11 +95,12 @@ static void expect_turn(LineFollowResult_t r, int direction)
 {
     assert(r.state == LINE_FOLLOW_TURNING);
     assert(r.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(r.left_command == (direction < 0 ? LINE_FOLLOW_TURN_INNER_COMMAND :
-                                             LINE_FOLLOW_TURN_OUTER_COMMAND));
-    assert(r.right_command == (direction < 0 ? LINE_FOLLOW_TURN_OUTER_COMMAND :
-                                              LINE_FOLLOW_TURN_INNER_COMMAND));
-    assert(r.left_command > 0.0f && r.right_command > 0.0f);
+    if (r.turn_phase == LINE_FOLLOW_TURN_SEEK) {
+        assert(r.left_command == (direction < 0 ? LINE_FOLLOW_TURN_INNER_COMMAND : LINE_FOLLOW_TURN_OUTER_COMMAND));
+        assert(r.right_command == (direction < 0 ? LINE_FOLLOW_TURN_OUTER_COMMAND : LINE_FOLLOW_TURN_INNER_COMMAND));
+    }
+    assert(r.left_command >= -1000.0f && r.right_command >= -1000.0f);
+    assert(r.left_command <= 1000.0f && r.right_command <= 1000.0f);
 }
 
 static void test_inner_steering(void)
@@ -176,12 +177,20 @@ static void test_corner_sequences(void)
         expect_turn(step(0U), direction); /* no 25 ms straight-ahead gap */
         expect_turn(step(LEFT_INNER), direction);
         expect_turn(step(0U), direction); /* one inner hit is insufficient */
-        LineFollowResult_t r;
-        for (unsigned i = 1; i < follow.reacquire_cycles; ++i) {
-            expect_turn(step(CENTER), direction);
+        LineFollowResult_t r = step(CENTER);
+        for (unsigned i = 1; i < LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES + LINE_FOLLOW_TURN_REACQUIRE_CYCLES - 1U; ++i) {
+            if (r.state != LINE_FOLLOW_TURNING) break;
+            r = step(CENTER);
         }
-        r = step(CENTER);
         assert(r.state == LINE_FOLLOW_TRACKING && r.lost_cycles == 0U);
+        assert(r.base_speed < CONTROL_BASE_SPEED_DEFAULT);
+        float previous_base = r.base_speed;
+        for (unsigned i = 0; i < 200U; ++i) {
+            r = step(CENTER);
+            assert(r.base_speed >= previous_base);
+            assert(r.base_speed <= previous_base + LINE_FOLLOW_TURN_EXIT_STEP + 0.01f);
+            previous_base = r.base_speed;
+        }
         expect(CENTER, CONTROL_BASE_SPEED_DEFAULT, CONTROL_BASE_SPEED_DEFAULT);
 
         /* Outer -> lost also works if the corner pattern was missed. */
@@ -198,6 +207,40 @@ static void test_corner_sequences(void)
         }
         expect_turn(step(outer), direction);
     }
+}
+
+static void test_turn_alignment(void)
+{
+    LineFollow_Start();
+    (void)step(LEFT_OUTER | CENTER);
+    /* The old straight leg can remain centered well beyond the old 60+10 ms
+     * exit test. It cannot qualify as a completed turn without a departure. */
+    for (unsigned i = 0; i < 500U; ++i) {
+        LineFollowResult_t r = step(CENTER);
+        assert(r.state == LINE_FOLLOW_TURNING && r.fault == LINE_FOLLOW_FAULT_NONE);
+    }
+    (void)step(0U);
+    LineFollowResult_t r = step(RIGHT_INNER);
+    assert(r.turn_phase == LINE_FOLLOW_TURN_ALIGN);
+    assert(r.left_command > r.right_command); /* follow the current right-side line */
+    r = step(0U);
+    assert(r.left_command == LINE_FOLLOW_TURN_OUTER_COMMAND);
+    assert(r.right_command == LINE_FOLLOW_TURN_INNER_COMMAND); /* search right, not the entry left */
+    r = step(LEFT_INNER);
+    assert(r.left_command < r.right_command);
+    r = step(0U);
+    assert(r.left_command == LINE_FOLLOW_TURN_INNER_COMMAND);
+
+    /* A slow vehicle still turning at 1.2 s must not trip the old watchdog. */
+    LineFollow_Start();
+    (void)step(LEFT_OUTER | CENTER);
+    for (unsigned i = 0; i < 1500U; ++i) {
+        r = step(LEFT_OUTER);
+        assert(r.state == LINE_FOLLOW_TURNING && r.fault == LINE_FOLLOW_FAULT_NONE);
+    }
+    LineFollow_Stop();
+    r = step(CENTER);
+    assert(r.turn_phase == LINE_FOLLOW_TURN_NONE && r.turn_cycles == 0U);
 }
 
 static void test_corner_watchdogs(void)
@@ -226,7 +269,7 @@ static void test_corner_watchdogs(void)
 
     LineFollow_Start();
     expect_turn(step(RIGHT_OUTER | CENTER), 1);
-    for (unsigned i = 0; i < follow.max_lost_cycles; ++i) {
+    for (unsigned i = 0; i < LINE_FOLLOW_TURN_MAX_LOST_CYCLES; ++i) {
         expect_turn(step(0U), 1);
     }
     r = step(0U);
@@ -310,6 +353,88 @@ static void test_corner_model(float mirror, float left_gain, float heading)
     assert(mirror * sinf(heading) > 0.95f);
 }
 
+/* User-measured wheel track 16.8 cm, probes about 10 cm ahead. Also test
+ * 8/12 cm offsets, 0..550 motor dead zones, first-order lag 40/80 ms and
+ * signed wheel response. Speeds, sensor spacing and stripe width remain
+ * model assumptions. A turn must finish without a full rotation. */
+static unsigned max_turn, max_lost;
+static float model_dead_zone;
+
+static float probe_speed_command(float command, float scale)
+{
+    float magnitude = fmaxf(0.0f, fabsf(command) - model_dead_zone);
+    return copysignf(scale * magnitude / (1000.0f - model_dead_zone), command);
+}
+
+static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
+                                  float left_gain, float mirror)
+{
+    float x = 0.1f, y = 0.0f, heading = 0.0f, vl = 0.0f, vr = 0.0f;
+    unsigned turn_samples = 0U;
+    LineFollow_Start();
+    for (unsigned cycle = 0U; cycle < 100000U; ++cycle) {
+        uint8_t black = 0U;
+        for (unsigned bit = 0U; bit < 4U; ++bit) {
+            float lateral = (1.5f - (float)bit) * 0.01f;
+            float sx = x + sensor_offset * cosf(heading) - lateral * sinf(heading);
+            float sy = y + sensor_offset * sinf(heading) + lateral * cosf(heading);
+            if (corner_distance(sx, mirror * sy) <= 0.0075f) black |= 1U << bit;
+        }
+        LineFollowResult_t r = step(black);
+        if (r.turn_cycles > max_turn) max_turn = r.turn_cycles;
+        if (r.lost_cycles > max_lost) max_lost = r.lost_cycles;
+        if (r.fault != LINE_FOLLOW_FAULT_NONE || fabsf(heading) > 3.14f) {
+            fprintf(stderr, "Corner dynamics failure: offset %.2f speed %.2f lag %.2f gain %.2f side %+.0f cycle %u xy %.3f %.3f angle %.2f bits %u fault %u phase %u\n",
+                    sensor_offset, scale, lag, left_gain, mirror, cycle, x, y,
+                    heading, black, r.fault, r.turn_phase);
+            return false;
+        }
+        if (r.state == LINE_FOLLOW_TURNING) ++turn_samples;
+        vl += CONTROL_PERIOD_SECONDS / lag * (probe_speed_command(r.left_command, scale) * left_gain - vl);
+        vr += CONTROL_PERIOD_SECONDS / lag * (probe_speed_command(r.right_command, scale) - vr);
+        heading += (vr - vl) / 0.168f * CONTROL_PERIOD_SECONDS;
+        x += 0.5f * (vl + vr) * cosf(heading) * CONTROL_PERIOD_SECONDS;
+        y += 0.5f * (vl + vr) * sinf(heading) * CONTROL_PERIOD_SECONDS;
+        if (mirror * y > 0.3f) {
+            bool complete = fabsf(x - 0.5f) < 0.035f &&
+                            mirror * sinf(heading) > 0.95f && turn_samples > 0U;
+            if (!complete) {
+                fprintf(stderr, "Corner dynamics missed exit: offset %.2f speed %.2f lag %.2f gain %.2f side %+.0f xy %.3f %.3f angle %.2f\n",
+                        sensor_offset, scale, lag, left_gain, mirror, x, y, heading);
+            }
+            return complete;
+        }
+    }
+    return false;
+}
+
+static void test_dynamic_corner_models(void)
+{
+    const float offsets[] = {0.08f, 0.10f, 0.12f};
+    const float scales[] = {0.12f, 0.24f, 0.60f};
+    const float dead_zones[] = {0.0f, 250.0f, 350.0f, 450.0f, 500.0f, 550.0f};
+    unsigned total = 0U;
+    max_turn = max_lost = 0U;
+    for (unsigned a = 0U; a < 3U; ++a) {
+        for (unsigned v = 0U; v < 3U; ++v) {
+            for (unsigned dz = 0U; dz < 6U; ++dz) {
+                model_dead_zone = dead_zones[dz];
+                for (unsigned lag = 0U; lag < 2U; ++lag) {
+                    for (unsigned gain = 0U; gain < 2U; ++gain) {
+                        for (int side = -1; side <= 1; side += 2) {
+                            assert(dynamic_corner_model(offsets[a], scales[v], lag ? 0.08f : 0.04f,
+                                                        gain ? 1.03f : 0.97f, (float)side));
+                            ++total;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    printf("Dynamic corner models: %u passed; max turn %u ticks, max lost %u ticks\n",
+           total, max_turn, max_lost);
+}
+
 static float arc_distance(float x, float y)
 {
     float sx = fmaxf(0.0f, fminf(x, 0.85f));
@@ -318,7 +443,8 @@ static float arc_distance(float x, float y)
     return d;
 }
 
-static void test_arc_model(float mirror, float left_gain, float heading)
+static void test_arc_model(float mirror, float left_gain, float heading,
+                           float wheel_track, float sensor_offset)
 {
     float x = 0.1f, y = 0.0f, max_error = 0.0f;
     unsigned cycles;
@@ -327,22 +453,22 @@ static void test_arc_model(float mirror, float left_gain, float heading)
         uint8_t black = 0U;
         for (unsigned bit = 0U; bit < 4U; ++bit) {
             float lateral = (1.5f - (float)bit) * 0.01f;
-            float sx = x + 0.08f * cosf(heading) - lateral * sinf(heading);
-            float sy = y + 0.08f * sinf(heading) + lateral * cosf(heading);
+            float sx = x + sensor_offset * cosf(heading) - lateral * sinf(heading);
+            float sy = y + sensor_offset * sinf(heading) + lateral * cosf(heading);
             if (arc_distance(sx, mirror * sy) <= 0.0075f) black |= (1U << bit);
         }
         LineFollowResult_t r = step(black);
         assert(r.fault == LINE_FOLLOW_FAULT_NONE);
         float vl = 0.6f * r.left_command / 1000.0f * left_gain;
         float vr = 0.6f * r.right_command / 1000.0f;
-        heading += (vr - vl) / 0.14f * CONTROL_PERIOD_SECONDS;
+        heading += (vr - vl) / wheel_track * CONTROL_PERIOD_SECONDS;
         x += 0.5f * (vl + vr) * cosf(heading) * CONTROL_PERIOD_SECONDS;
         y += 0.5f * (vl + vr) * sinf(heading) * CONTROL_PERIOD_SECONDS;
         max_error = fmaxf(max_error, arc_distance(x, mirror * y));
         if (mirror * y < -1.15f && x < 0.55f) break;
     }
-    printf("Discrete R60 model: side %+.0f gain %.2f, %u cycles, max axle error %.1f mm\n",
-           mirror, left_gain, cycles, 1000.0f * max_error);
+    printf("Discrete R60 model: wheel track %.1f cm, probes %.1f cm, side %+.0f gain %.2f, %u cycles, max axle error %.1f mm\n",
+           wheel_track * 100.0f, sensor_offset * 100.0f, mirror, left_gain, cycles, 1000.0f * max_error);
     assert(cycles < 60000U && max_error < 0.04f && cosf(heading) < -0.95f);
 }
 
@@ -471,13 +597,18 @@ int main(void)
     test_straight_models();
     test_corner_sequences();
     test_corner_watchdogs();
+    test_turn_alignment();
+    test_dynamic_corner_models();
     for (int side = -1; side <= 1; side += 2) {
         test_corner_model((float)side, 1.00f, 0.00f);
         test_corner_model((float)side, 0.97f, 0.03f);
         test_corner_model((float)side, 1.03f, -0.03f);
-        test_arc_model((float)side, 1.00f, 0.00f);
-        test_arc_model((float)side, 0.97f, 0.03f);
-        test_arc_model((float)side, 1.03f, -0.03f);
+        test_arc_model((float)side, 1.00f, 0.00f, 0.14f, 0.08f);
+        test_arc_model((float)side, 1.00f, 0.00f, 0.168f, 0.10f);
+        test_arc_model((float)side, 0.97f, 0.03f, 0.14f, 0.08f);
+        test_arc_model((float)side, 0.97f, 0.03f, 0.168f, 0.10f);
+        test_arc_model((float)side, 1.03f, -0.03f, 0.14f, 0.08f);
+        test_arc_model((float)side, 1.03f, -0.03f, 0.168f, 0.10f);
     }
     test_vehicle_turn_gating();
     puts("PASS: gentle inner steering, straight stability, corner latch, recovery, watchdogs and vehicle gating");

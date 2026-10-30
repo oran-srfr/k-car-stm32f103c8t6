@@ -49,6 +49,8 @@ volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
 volatile uint8_t g_tracking_raw_bits = 0x0FU;
 volatile uint8_t g_tracking_bits = 0U;
 volatile float g_tracking_deviation = 0.0f;
+volatile LineFollowFault_t g_tracking_fault = LINE_FOLLOW_FAULT_NONE;
+volatile LineFollowTurnPhase_t g_tracking_turn_phase = LINE_FOLLOW_TURN_NONE;
 
 static void HMI_Poll(AppInputs *inputs)
 {
@@ -99,6 +101,8 @@ static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
     g_tracking_raw_bits = vehicle.line_follow.control.raw_bits;
     g_tracking_bits = vehicle.line_follow.control.track.black_bits;
     g_tracking_deviation = vehicle.line_follow.control.track.deviation;
+    g_tracking_fault = vehicle.line_follow.fault;
+    g_tracking_turn_phase = vehicle.line_follow.turn_phase;
 }
 
 static void Parking_Poll(AppInputs *inputs)
@@ -273,6 +277,13 @@ static void Debug_Display(const AppStatus *status)
     DebugLine_AppendU16(line, (uint16_t)g_tracking_status, 1U);
     DebugLine_Append(line, "O");
     DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
+    DebugLine_Append(line, "T");
+    DebugLine_AppendU16(line, (uint16_t)g_vehicle_control_state, 1U);
+    DebugLine_Append(line, "F");
+    DebugLine_AppendU16(line, (uint16_t)g_tracking_fault, 1U);
+    DebugLine_Append(line, "P");
+    DebugLine_AppendU16(line, (uint16_t)g_tracking_turn_phase, 1U);
+    DebugLine_Append(line, FIRMWARE_REVISION_TEXT);
     DebugLine_Show(112U, 0U, line, WHITE);
 
 #if DEBUG_LCD_FULL

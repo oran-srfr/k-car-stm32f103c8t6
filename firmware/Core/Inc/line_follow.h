@@ -27,6 +27,13 @@ typedef enum
   LINE_FOLLOW_FAULT_TURN_TIMEOUT
 } LineFollowFault_t;
 
+typedef enum
+{
+  LINE_FOLLOW_TURN_NONE = 0U,
+  LINE_FOLLOW_TURN_SEEK,
+  LINE_FOLLOW_TURN_ALIGN
+} LineFollowTurnPhase_t;
+
 typedef struct
 {
   float curve_speed;                 /* 普通弯基础命令。 */
@@ -51,6 +58,8 @@ typedef struct
   float base_speed;
   float left_command;
   float right_command;
+  LineFollowTurnPhase_t turn_phase;
+  uint16_t turn_cycles;              /* Last/current turn duration, for diagnosis. */
 } LineFollowResult_t;
 
 /** 初始化循迹模块；上电默认进入 STOPPED，所有命令为 0。 */

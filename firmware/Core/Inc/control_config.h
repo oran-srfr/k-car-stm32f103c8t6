@@ -55,15 +55,22 @@
  * 80 周期 ≈ 80 ms —— 丢线后还要直冲 80 ms 才肯找线，弯道上这就是「反应慢」。
  * 收到 25 周期（≈25 ms），一丢线几乎立刻开始朝最后方向找。 */
 #define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (25U)
-/* Sharp turns: keep both wheels moving with a strong differential.
+/* Sharp turns: stop the inside wheel while seeking the line.
  * Confirm an outer probe for 3 ms; a three-probe corner pattern or an
  * outer-probe -> lost transition starts the turn immediately. */
-#define LINE_FOLLOW_TURN_OUTER_COMMAND                (950.0f)
-#define LINE_FOLLOW_TURN_INNER_COMMAND                (350.0f)
+#define LINE_FOLLOW_TURN_OUTER_COMMAND                (800.0f)
+#define LINE_FOLLOW_TURN_INNER_COMMAND                (0.0f)
 #define LINE_FOLLOW_TURN_TRIGGER_CYCLES               (3U)
 #define LINE_FOLLOW_TURN_MIN_CYCLES                   (60U)
-#define LINE_FOLLOW_TURN_MAX_CYCLES                   (1200U)
-#define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (150U)
+#define LINE_FOLLOW_TURN_MAX_CYCLES                   (4500U)
+#define LINE_FOLLOW_TURN_MAX_LOST_CYCLES              (3000U)
+#define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (500U)
+#define LINE_FOLLOW_TURN_ALIGN_COMMAND               (560.0f)
+#define LINE_FOLLOW_TURN_ALIGN_CORRECTION            (100.0f)
+#define LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES             (200U)
+#define LINE_FOLLOW_TURN_REACQUIRE_CYCLES             (30U)
+#define LINE_FOLLOW_TURN_EXIT_STEP                   (1.0f)
+#define FIRMWARE_REVISION_TEXT                       "R3"
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)
 #endif

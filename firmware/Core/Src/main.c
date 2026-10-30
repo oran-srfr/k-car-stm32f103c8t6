@@ -12,11 +12,12 @@ static void SystemClock_Config(void)
     RCC_OscInitTypeDef oscillator = {0};
     RCC_ClkInitTypeDef clocks = {0};
 
-    /* Use the internal 8 MHz oscillator until the board crystal is confirmed. */
-    oscillator.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-    oscillator.HSIState = RCC_HSI_ON;
-    oscillator.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-    oscillator.PLL.PLLState = RCC_PLL_NONE;
+    /* 8 MHz HSE x9 PLL = 72 MHz system clock. */
+    oscillator.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    oscillator.HSEState = RCC_HSE_ON;
+    oscillator.PLL.PLLState = RCC_PLL_ON;
+    oscillator.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+    oscillator.PLL.PLLMUL = RCC_PLL_MUL9;
     if (HAL_RCC_OscConfig(&oscillator) != HAL_OK) {
         error_code = 1U;
         Error_Handler();
@@ -24,11 +25,11 @@ static void SystemClock_Config(void)
 
     clocks.ClockType = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK |
                        RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-    clocks.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    clocks.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
     clocks.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    clocks.APB1CLKDivider = RCC_HCLK_DIV1;
+    clocks.APB1CLKDivider = RCC_HCLK_DIV2;
     clocks.APB2CLKDivider = RCC_HCLK_DIV1;
-    if (HAL_RCC_ClockConfig(&clocks, FLASH_LATENCY_0) != HAL_OK) {
+    if (HAL_RCC_ClockConfig(&clocks, FLASH_LATENCY_2) != HAL_OK) {
         error_code = 2U;
         Error_Handler();
     }

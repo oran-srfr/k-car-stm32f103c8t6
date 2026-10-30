@@ -10,7 +10,7 @@
 #define CONTROL_PD_DERIVATIVE_ALPHA          (0.25f)
 #define CONTROL_PD_D_TERM_LIMIT              (30.0f)
 /* Driver units: 1000 = full duty. 650 = 65%, NOT TIM3 CCR=650.
- * Direct correction uses 50%..77%; normal driving remains around 65%. */
+ * Direct correction uses 45%..77%; normal driving remains around 65%. */
 #define CONTROL_BASE_SPEED_DEFAULT           (650.0f)
 #define CONTROL_MIN_FORWARD_COMMAND_DEFAULT  (550.0f)
 #define CONTROL_MAX_FORWARD_COMMAND_DEFAULT  (770.0f)
@@ -34,12 +34,12 @@
 #define LINE_FOLLOW_HARD_TURN_MIN_FORWARD            (450.0f)
 #define LINE_FOLLOW_HARD_TURN_GAIN                   (1.25f)
 /* Direct four-sensor recovery uses a two-wheel differential at all times.
- * Inner correction runs 500/700; outer correction uses a wider 500/770.
+ * Inner correction runs 450/700; outer correction uses a wider 450/770.
  * Four indicators off first drive straight at 550 for 80 ms, then search. */
 #define LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT       (700.0f)
-#define LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT       (500.0f)
+#define LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT       (450.0f)
 #define LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT       (770.0f)
-#define LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT       (500.0f)
+#define LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT       (450.0f)
 #define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (80U)
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)

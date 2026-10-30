@@ -34,6 +34,7 @@ static LineFollowConfig_t s_line_follow_config = {
     LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
 };
 static uint32_t s_last_control_ms;
+static uint8_t s_last_sensor_raw_bits = 0xFFU;
 static char s_debug_line[2][17];
 
 volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
@@ -70,8 +71,13 @@ static void Mpu_Poll(uint32_t now_ms)
 static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
 {
     VehicleControlOutput_t vehicle;
+    LineSensorRaw_t raw = LineSensor_ReadRaw();
+    uint8_t raw_bits = (uint8_t)(raw.x1 | (raw.x2 << 1U) |
+                                 (raw.x3 << 2U) | (raw.x4 << 3U));
 
-    if ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS) {
+    if ((raw_bits != s_last_sensor_raw_bits) ||
+        ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS)) {
+        s_last_sensor_raw_bits = raw_bits;
         s_last_control_ms = now_ms;
         VehicleControl_Update();
     }
@@ -107,6 +113,7 @@ void Modules_Init(void)
     VehicleControl_Init(&s_pd_config, &s_motor_command_config, &s_line_follow_config);
     VehicleControl_Start();
     s_last_control_ms = HAL_GetTick();
+    s_last_sensor_raw_bits = 0xFFU;
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);

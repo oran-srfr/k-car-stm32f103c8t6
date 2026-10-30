@@ -15,6 +15,13 @@ static uint16_t s_reacquire_cycles = 0U;
 static float s_previous_base_speed = 0.0f;
 static float s_reacquire_start_base = 0.0f;
 static uint16_t s_curve_hold_cycles = 0U;
+#if LINE_FOLLOW_DISCRETE_MODE
+static int8_t s_turn_direction = 0;
+static int8_t s_outer_direction = 0;
+static uint16_t s_outer_cycles = 0U;
+static uint16_t s_turn_cycles = 0U;
+static uint16_t s_turn_all_black_cycles = 0U;
+#endif
 #if !LINE_FOLLOW_DISCRETE_MODE
 static int8_t s_error_direction = 0;
 static uint8_t s_error_direction_cycles = 0U;
@@ -38,6 +45,13 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_previous_base_speed = 0.0f;
   s_reacquire_start_base = 0.0f;
   s_curve_hold_cycles = 0U;
+#if LINE_FOLLOW_DISCRETE_MODE
+  s_turn_direction = 0;
+  s_outer_direction = 0;
+  s_outer_cycles = 0U;
+  s_turn_cycles = 0U;
+  s_turn_all_black_cycles = 0U;
+#endif
 #if !LINE_FOLLOW_DISCRETE_MODE
   s_error_direction = 0;
   s_error_direction_cycles = 0U;
@@ -198,6 +212,75 @@ static void LineFollow_UpdateLastDeviation(float deviation)
    * direction for short gaps on an arc; Start/Stop explicitly clear it. */
 }
 
+#if LINE_FOLLOW_DISCRETE_MODE
+static void LineFollow_BeginTurn(int8_t direction)
+{
+  s_state = LINE_FOLLOW_TURNING;
+  s_turn_direction = direction;
+  s_turn_cycles = 0U;
+  s_turn_all_black_cycles = 0U;
+  s_reacquire_cycles = 0U;
+  s_lost_cycles = 0U;
+}
+
+/* Keep the turn direction across gaps and intermediate inner-probe hits.
+ * Neither a fixed 90-degree delay nor a single black sample proves alignment. */
+static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
+                                   LineFollowResult_t *result)
+{
+  uint8_t bits = result->control.track.black_bits;
+  bool centered = (bits & (SENSOR_LEFT_INNER_MASK |
+                            SENSOR_RIGHT_INNER_MASK)) != 0U &&
+                  (bits & (SENSOR_LEFT_OUTER_MASK |
+                            SENSOR_RIGHT_OUTER_MASK)) == 0U;
+
+  if (++s_turn_cycles > LINE_FOLLOW_TURN_MAX_CYCLES) {
+    LineFollow_SetFault(LINE_FOLLOW_FAULT_TURN_TIMEOUT, result);
+    return;
+  }
+  if (result->control.track.status == LINE_TRACK_STATUS_ALL_BLACK) {
+    if (++s_turn_all_black_cycles > LINE_FOLLOW_TURN_ALL_BLACK_CYCLES) {
+      LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, result);
+      return;
+    }
+  } else {
+    s_turn_all_black_cycles = 0U;
+  }
+  if (result->control.track.status == LINE_TRACK_STATUS_LOST) {
+    if (++s_lost_cycles > follow_config->max_lost_cycles) {
+      LineFollow_SetFault(LINE_FOLLOW_FAULT_LOST_TIMEOUT, result);
+      return;
+    }
+  }
+
+  if (centered && s_turn_cycles >= LINE_FOLLOW_TURN_MIN_CYCLES) {
+    if (s_reacquire_cycles < UINT16_MAX) {
+      ++s_reacquire_cycles;
+    }
+    if (s_reacquire_cycles >= follow_config->reacquire_cycles) {
+      s_state = LINE_FOLLOW_TRACKING;
+      s_turn_direction = 0;
+      s_outer_direction = 0;
+      s_outer_cycles = 0U;
+      s_lost_cycles = 0U;
+      s_reacquire_cycles = 0U;
+      LineFollow_UpdateLastDeviation(result->control.track.deviation);
+      /* Leave the corner at curve speed; normal feedback resumes next tick. */
+      result->left_command = follow_config->curve_speed;
+      result->right_command = follow_config->curve_speed;
+      result->base_speed = follow_config->curve_speed;
+      return;
+    }
+  } else {
+    s_reacquire_cycles = 0U;
+  }
+
+  result->left_command = (s_turn_direction < 0) ? 0.0f : LINE_FOLLOW_TURN_COMMAND;
+  result->right_command = (s_turn_direction < 0) ? LINE_FOLLOW_TURN_COMMAND : 0.0f;
+  result->base_speed = 0.5f * LINE_FOLLOW_TURN_COMMAND;
+}
+#endif
+
 static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
                                   const LineFollowConfig_t *follow_config,
                                   LineFollowResult_t *result)
@@ -231,6 +314,13 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_reacquire_cycles = 0U;
 #if LINE_FOLLOW_DISCRETE_MODE
   {
+    /* The outer probe saw the departure side just before the gap. Do not
+     * insert a straight-ahead interval or forget that side at a corner. */
+    if (s_outer_direction != 0) {
+      LineFollow_BeginTurn(s_outer_direction);
+      LineFollow_HandleTurn(follow_config, result);
+      return;
+    }
     int8_t direction = (s_last_valid_direction != 0) ?
                        s_last_valid_direction : 1;
     float fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
@@ -278,8 +368,27 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
   float straight = motor_config->base_speed;
 
-  (void)follow_config;
   LineFollow_UpdateLastDeviation(result->control.track.deviation);
+  if (left_outer != right_outer) {
+    int8_t direction = left_outer ? -1 : 1;
+    if (direction == s_outer_direction) {
+      if (s_outer_cycles < UINT16_MAX) {
+        ++s_outer_cycles;
+      }
+    } else {
+      s_outer_direction = direction;
+      s_outer_cycles = 1U;
+    }
+    if ((left_inner && right_inner) ||
+        (s_outer_cycles >= LINE_FOLLOW_TURN_TRIGGER_CYCLES)) {
+      LineFollow_BeginTurn(direction);
+      LineFollow_HandleTurn(follow_config, result);
+      return;
+    }
+  } else {
+    s_outer_direction = 0;
+    s_outer_cycles = 0U;
+  }
   s_state = LINE_FOLLOW_TRACKING;
   s_fault = LINE_FOLLOW_FAULT_NONE;
   s_lost_cycles = 0U;
@@ -287,7 +396,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   s_curve_hold_cycles = 0U;
 
   if (left_outer || right_outer) {
-    /* Outer probe wins: use a larger two-wheel differential, never zero. */
+    /* Brief outer-probe hits still use the ordinary curve differential. */
     if (left_outer && right_outer) {
       result->left_command = inner_slow;
       result->right_command = inner_slow;
@@ -434,14 +543,20 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
   {
     /* 故障锁存，必须重新 Start 或先 Stop 后再 Start。 */
   }
-  else if (result.control.track.status == LINE_TRACK_STATUS_ALL_BLACK)
-  {
-    LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, &result);
-  }
   else if ((LineFollow_ConfigIsValid(motor_config, follow_config) == 0U) ||
            (result.control.control_status == LINE_CONTROL_STATUS_INVALID_INPUT_STOP))
   {
     LineFollow_SetFault(LINE_FOLLOW_FAULT_INVALID_INPUT, &result);
+  }
+#if LINE_FOLLOW_DISCRETE_MODE
+  else if (s_state == LINE_FOLLOW_TURNING)
+  {
+    LineFollow_HandleTurn(follow_config, &result);
+  }
+#endif
+  else if (result.control.track.status == LINE_TRACK_STATUS_ALL_BLACK)
+  {
+    LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, &result);
   }
   else if (result.control.track.status == LINE_TRACK_STATUS_LOST)
   {

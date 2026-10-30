@@ -21,6 +21,8 @@ static int8_t s_outer_direction = 0;
 static uint16_t s_outer_cycles = 0U;
 static uint16_t s_turn_cycles = 0U;
 static uint16_t s_turn_all_black_cycles = 0U;
+static int8_t s_inner_direction = 0;
+static float s_inner_correction = 0.0f;
 #endif
 #if !LINE_FOLLOW_DISCRETE_MODE
 static int8_t s_error_direction = 0;
@@ -51,6 +53,8 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_outer_cycles = 0U;
   s_turn_cycles = 0U;
   s_turn_all_black_cycles = 0U;
+  s_inner_direction = 0;
+  s_inner_correction = 0.0f;
 #endif
 #if !LINE_FOLLOW_DISCRETE_MODE
   s_error_direction = 0;
@@ -213,8 +217,44 @@ static void LineFollow_UpdateLastDeviation(float deviation)
 }
 
 #if LINE_FOLLOW_DISCRETE_MODE
+static void LineFollow_ResetInnerSteering(void)
+{
+  s_inner_direction = 0;
+  s_inner_correction = 0.0f;
+}
+
+static void LineFollow_HandleInner(int8_t direction,
+                                   const MotorCommandConfig_t *motor_config,
+                                   LineFollowResult_t *result)
+{
+  float limit = 0.5f * (LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT -
+                        LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT);
+  MotorCommandResult_t motor;
+
+  if (direction == 0) {
+    /* Remove steering immediately at center; filtering old commands here
+     * would keep pushing the car across the line. */
+    LineFollow_ResetInnerSteering();
+  } else if (direction != s_inner_direction) {
+    s_inner_direction = direction;
+    s_inner_correction = LINE_FOLLOW_INNER_INITIAL_CORRECTION;
+  } else {
+    s_inner_correction += LINE_FOLLOW_INNER_CORRECTION_STEP;
+  }
+  if (s_inner_correction > limit) {
+    s_inner_correction = limit;
+  }
+  /* Reuse limits and straight trim for both centered and inner-probe input. */
+  motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
+                                 (float)direction * s_inner_correction,
+                                 motor_config);
+  result->left_command = motor.left_command;
+  result->right_command = motor.right_command;
+}
+
 static void LineFollow_BeginTurn(int8_t direction)
 {
+  LineFollow_ResetInnerSteering();
   s_state = LINE_FOLLOW_TURNING;
   s_turn_direction = direction;
   s_turn_cycles = 0U;
@@ -314,6 +354,7 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_reacquire_cycles = 0U;
 #if LINE_FOLLOW_DISCRETE_MODE
   {
+    LineFollow_ResetInnerSteering();
     /* The outer probe saw the departure side just before the gap. Do not
      * insert a straight-ahead interval or forget that side at a corner. */
     if (s_outer_direction != 0) {
@@ -362,11 +403,9 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   bool left_inner = (bits & SENSOR_LEFT_INNER_MASK) != 0U;
   bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
   bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
-  float inner_fast = LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT;
   float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
   float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
   float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
-  float straight = motor_config->base_speed;
 
   LineFollow_UpdateLastDeviation(result->control.track.deviation);
   if (left_outer != right_outer) {
@@ -396,6 +435,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   s_curve_hold_cycles = 0U;
 
   if (left_outer || right_outer) {
+    LineFollow_ResetInnerSteering();
     /* Brief outer-probe hits still use the ordinary curve differential. */
     if (left_outer && right_outer) {
       result->left_command = inner_slow;
@@ -407,17 +447,10 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
       result->left_command = outer_fast;
       result->right_command = outer_slow;
     }
-  } else if (left_inner && right_inner) {
-    result->left_command = straight;
-    result->right_command = straight;
-  } else if (left_inner) {
-    /* Line on the left: left wheel slower, right wheel faster. */
-    result->left_command = inner_slow;
-    result->right_command = inner_fast;
-  } else if (right_inner) {
-    /* Line on the right: left wheel faster, right wheel slower. */
-    result->left_command = inner_fast;
-    result->right_command = inner_slow;
+  } else if (left_inner || right_inner) {
+    int8_t direction = (int8_t)((right_inner ? 1 : 0) -
+                                (left_inner ? 1 : 0));
+    LineFollow_HandleInner(direction, motor_config, result);
   } else {
     result->left_command = inner_slow;
     result->right_command = inner_slow;

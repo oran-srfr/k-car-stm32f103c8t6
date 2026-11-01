@@ -18,11 +18,9 @@ static uint16_t s_curve_hold_cycles = 0U;
 #if LINE_FOLLOW_DISCRETE_MODE
 static int8_t s_turn_direction = 0;
 static int8_t s_outer_direction = 0;
-static uint16_t s_outer_cycles = 0U;
 static uint16_t s_turn_cycles = 0U;
 static uint16_t s_turn_all_black_cycles = 0U;
-static int8_t s_inner_direction = 0;
-static float s_inner_correction = 0.0f;
+static float s_filtered_position = 0.0f;
 static uint16_t s_turn_align_cycles = 0U;
 static LineFollowTurnPhase_t s_turn_phase = LINE_FOLLOW_TURN_NONE;
 static float s_resume_base = 0.0f;
@@ -69,11 +67,9 @@ static void LineFollow_ResetState(LineFollowState_t state)
 #if LINE_FOLLOW_DISCRETE_MODE
   s_turn_direction = 0;
   s_outer_direction = 0;
-  s_outer_cycles = 0U;
   s_turn_cycles = 0U;
   s_turn_all_black_cycles = 0U;
-  s_inner_direction = 0;
-  s_inner_correction = 0.0f;
+  s_filtered_position = 0.0f;
   s_turn_align_cycles = 0U;
   s_turn_phase = LINE_FOLLOW_TURN_NONE;
   s_resume_base = 0.0f;
@@ -248,10 +244,9 @@ static void LineFollow_UpdateLastDeviation(float deviation)
 }
 
 #if LINE_FOLLOW_DISCRETE_MODE
-static void LineFollow_ResetInnerSteering(void)
+static void LineFollow_ResetPositionEstimator(void)
 {
-  s_inner_direction = 0;
-  s_inner_correction = 0.0f;
+  s_filtered_position = 0.0f;
 }
 
 static float LineFollow_DampCorrection(float correction, float limit)
@@ -259,59 +254,42 @@ static float LineFollow_DampCorrection(float correction, float limit)
   /* Brake measured rotation even while an inner probe is still off center.
    * At zero rate the full positional correction remains available. */
   if (s_yaw_valid && s_yaw_sign_known) {
-    float damping = -s_yaw_rate * s_yaw_command_sign * LINE_FOLLOW_STRAIGHT_RATE_GAIN;
+    float damping = -s_yaw_rate * s_yaw_command_sign * LINE_FOLLOW_RATE_GAIN;
     correction += fmaxf(-limit, fminf(damping, limit));
   }
   return correction;
 }
 
-static void LineFollow_HandleInner(int8_t direction,
-                                   const MotorCommandConfig_t *motor_config,
-                                   LineFollowResult_t *result)
+static void LineFollow_VisibleCommand(const MotorCommandConfig_t *motor_config,
+                                      float ceiling, float limit,
+                                      bool yaw_brake, LineFollowResult_t *result)
 {
-  float limit = 0.5f * (LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT -
-                        LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT);
-  MotorCommandResult_t motor;
+  float error = result->control.track.deviation;
+  /* Filter positional quantization without integrating persistent error.
+   * Reverse sides immediately; decay the estimate smoothly at center. */
+  if (error * s_filtered_position < 0.0f) s_filtered_position = 0.0f;
+  s_filtered_position += LINE_FOLLOW_POSITION_ALPHA * (error - s_filtered_position);
+  float derivative = LINE_FOLLOW_POSITION_KD * result->control.pd.derivative;
+  derivative = fmaxf(-LINE_FOLLOW_POSITION_D_LIMIT,
+                     fminf(derivative, LINE_FOLLOW_POSITION_D_LIMIT));
+  float correction = LINE_FOLLOW_POSITION_KP * s_filtered_position +
+                     LINE_FOLLOW_POSITION_KPP * s_filtered_position * fabsf(s_filtered_position) +
+                     derivative;
+  correction = fmaxf(-limit, fminf(correction, limit));
+  correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_RATE_LIMIT);
+  correction = fmaxf(-limit, fminf(correction, limit));
   MotorCommandConfig_t config = *motor_config;
-
-  if (direction == 0) {
-    /* Clear positional steering at center; rate feedback below can still
-     * brake the rotation carried over from the previous off-center sample. */
-    LineFollow_ResetInnerSteering();
-  } else if (direction != s_inner_direction) {
-    s_inner_direction = direction;
-    s_inner_correction = LINE_FOLLOW_INNER_INITIAL_CORRECTION;
-  } else {
-    s_inner_correction += LINE_FOLLOW_INNER_CORRECTION_STEP;
-  }
-  if (s_inner_correction > limit) {
-    s_inner_correction = limit;
-  }
-  /* Reuse limits and straight trim for both centered and inner-probe input. */
-  if (s_resume_base >= config.base_speed) {
-    s_resume_base = 0.0f;
-  } else if (s_resume_base > 0.0f) {
-    s_resume_base += LINE_FOLLOW_TURN_EXIT_STEP;
-    if (s_resume_base < config.base_speed) {
-      config.base_speed = fmaxf(s_resume_base, config.min_forward_command);
-    } else {
-      s_resume_base = 0.0f;
-    }
-  }
-  float correction = (float)direction * s_inner_correction;
-  correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_STRAIGHT_RATE_LIMIT);
-  motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL, correction, &config);
+  config.base_speed = fminf(config.base_speed, ceiling) -
+                      LINE_FOLLOW_STEER_SLOWDOWN * fabsf(correction);
+  config.base_speed = fmaxf(config.min_forward_command, config.base_speed);
+  result->left_command = config.base_speed + correction;
+  result->right_command = config.base_speed - correction;
+  if (yaw_brake) LineFollow_ApplyYawBrake(config.base_speed, result);
+  MotorCommandResult_t motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
+      0.5f * (result->left_command - result->right_command), &config);
   result->left_command = motor.left_command;
   result->right_command = motor.right_command;
-  if (s_exit_hold_cycles > 0U) {
-    --s_exit_hold_cycles;
-    LineFollow_ApplyYawBrake(0.5f * (motor.left_command + motor.right_command), result);
-    motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
-                                   0.5f * (result->left_command - result->right_command) -
-                                   config.straight_trim, &config);
-    result->left_command = motor.left_command;
-    result->right_command = motor.right_command;
-  }
+  result->base_speed = 0.5f * (motor.left_command + motor.right_command);
 }
 
 static float LineFollow_WrapAngle(float angle)
@@ -355,7 +333,7 @@ static void LineFollow_ApplyYawBrake(float base, LineFollowResult_t *result)
 
 static void LineFollow_BeginTurn(int8_t direction, bool corner)
 {
-  LineFollow_ResetInnerSteering();
+  LineFollow_ResetPositionEstimator();
   s_state = LINE_FOLLOW_TURNING;
   s_turn_direction = direction;
   s_turn_cycles = 0U;
@@ -377,7 +355,8 @@ static void LineFollow_BeginTurn(int8_t direction, bool corner)
 
 /* Keep the entry direction while seeking; once the line appears, align
  * using current sensor feedback before restoring the straight-line speed. */
-static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
+static void LineFollow_HandleTurn(const MotorCommandConfig_t *motor_config,
+                                   const LineFollowConfig_t *follow_config,
                                    LineFollowResult_t *result)
 {
   uint8_t bits = result->control.track.black_bits;
@@ -438,7 +417,8 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
 
   bool heading_ready = !yaw_assist || LineFollow_TurnAngle() <=
                        LINE_FOLLOW_YAW_TARGET_DEG + LINE_FOLLOW_YAW_EXIT_MARGIN_DEG;
-  bool line_aligned = inner_only;
+  bool line_aligned = inner_only && (!s_yaw_valid ||
+                       fabsf(s_yaw_rate) <= LINE_FOLLOW_EXIT_MAX_RATE);
   if (line_aligned && heading_ready && s_turn_departed &&
       s_turn_align_cycles >= LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES) {
     if (s_reacquire_cycles < UINT16_MAX) {
@@ -448,7 +428,6 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
       s_state = LINE_FOLLOW_TRACKING;
       s_turn_direction = 0;
       s_outer_direction = 0;
-      s_outer_cycles = 0U;
       s_lost_cycles = 0U;
       s_reacquire_cycles = 0U;
       s_last_valid_direction = s_align_search_direction;
@@ -470,19 +449,11 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
     /* Once the outgoing line appears, steer using its CURRENT position.
      * Continuing the entry pivot here sweeps across it; immediately restoring
      * straight speed instead can throw the car off before it is aligned. */
-    float correction = LINE_FOLLOW_TURN_ALIGN_CORRECTION *
-                       result->control.track.deviation +
-                       LINE_FOLLOW_TURN_ALIGN_KD * result->control.pd.derivative;
-    correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
-                       fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
-    correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_ALIGN_RATE_LIMIT);
-    correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
-                       fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
+    LineFollow_VisibleCommand(motor_config, align_base,
+                              LINE_FOLLOW_TURN_ALIGN_LIMIT, yaw_assist, result);
     if (result->control.track.deviation != 0.0f) {
       s_align_search_direction = (result->control.track.deviation < 0.0f) ? -1 : 1;
     }
-    result->left_command = align_base + correction;
-    result->right_command = align_base - correction;
   } else if (s_turn_phase == LINE_FOLLOW_TURN_ALIGN &&
              (result->control.track.status == LINE_TRACK_STATUS_ALL_BLACK ||
               s_align_lost_cycles <= LINE_FOLLOW_TURN_ALIGN_SOFT_GAP_CYCLES)) {
@@ -502,8 +473,8 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
                           LINE_FOLLOW_TURN_OUTER_COMMAND :
                           LINE_FOLLOW_TURN_INNER_COMMAND;
   }
-  if (yaw_assist && (s_turn_phase == LINE_FOLLOW_TURN_ALIGN ||
-                    result->control.track.status == LINE_TRACK_STATUS_NORMAL)) {
+  if (yaw_assist && s_turn_phase != LINE_FOLLOW_TURN_ALIGN &&
+      result->control.track.status == LINE_TRACK_STATUS_NORMAL) {
     LineFollow_ApplyYawBrake(align_base, result);
   }
   result->base_speed = 0.5f * (result->left_command + result->right_command);
@@ -543,12 +514,12 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
   s_reacquire_cycles = 0U;
 #if LINE_FOLLOW_DISCRETE_MODE
   {
-    LineFollow_ResetInnerSteering();
+    LineFollow_ResetPositionEstimator();
     /* The outer probe saw the departure side just before the gap. Do not
      * insert a straight-ahead interval or forget that side at a corner. */
     if (s_outer_direction != 0 && s_exit_hold_cycles == 0U) {
       LineFollow_BeginTurn(s_outer_direction, true);
-      LineFollow_HandleTurn(follow_config, result);
+      LineFollow_HandleTurn(motor_config, follow_config, result);
       return;
     }
     if (s_exit_hold_cycles > 0U) --s_exit_hold_cycles;
@@ -596,30 +567,18 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   bool left_inner = (bits & SENSOR_LEFT_INNER_MASK) != 0U;
   bool right_inner = (bits & SENSOR_RIGHT_INNER_MASK) != 0U;
   bool right_outer = (bits & SENSOR_RIGHT_OUTER_MASK) != 0U;
-  float inner_slow = LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT;
-  float outer_fast = LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT;
-  float outer_slow = LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT;
 
   LineFollow_UpdateLastDeviation(result->control.track.deviation);
   if (left_outer != right_outer) {
     int8_t direction = left_outer ? -1 : 1;
-    if (direction == s_outer_direction) {
-      if (s_outer_cycles < UINT16_MAX) {
-        ++s_outer_cycles;
-      }
-    } else {
-      s_outer_direction = direction;
-      s_outer_cycles = 1U;
-    }
-    if ((left_inner && right_inner) ||
-        (s_exit_hold_cycles == 0U && s_outer_cycles >= LINE_FOLLOW_TURN_TRIGGER_CYCLES)) {
+    s_outer_direction = direction;
+    if (left_inner && right_inner) {
       LineFollow_BeginTurn(direction, left_inner && right_inner);
-      LineFollow_HandleTurn(follow_config, result);
+      LineFollow_HandleTurn(motor_config, follow_config, result);
       return;
     }
   } else {
     s_outer_direction = 0;
-    s_outer_cycles = 0U;
   }
 
   bool recovering = s_lost_cycles > 0U;
@@ -636,46 +595,17 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
   s_fault = LINE_FOLLOW_FAULT_NONE;
   s_curve_hold_cycles = 0U;
 
-  if (left_outer || right_outer) {
-    LineFollow_ResetInnerSteering();
-    if (s_exit_hold_cycles > 0U) {
-      /* An outgoing-line edge is not a second corner. Settle on that line
-       * before allowing another edge-only full-pivot trigger. */
-      --s_exit_hold_cycles;
-      MotorCommandConfig_t config = *motor_config;
-      config.base_speed = fminf(config.base_speed, LINE_FOLLOW_TURN_ALIGN_COMMAND);
-      float correction = LINE_FOLLOW_TURN_ALIGN_CORRECTION * result->control.track.deviation +
-                         LINE_FOLLOW_TURN_ALIGN_KD * result->control.pd.derivative;
-      correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
-                         fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
-      correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_ALIGN_RATE_LIMIT);
-      correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
-                         fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
-      result->left_command = config.base_speed + correction;
-      result->right_command = config.base_speed - correction;
-      LineFollow_ApplyYawBrake(config.base_speed, result);
-      MotorCommandResult_t command = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
-          0.5f * (result->left_command - result->right_command), &config);
-      result->left_command = command.left_command;
-      result->right_command = command.right_command;
-    } else if (left_outer && right_outer) {
-      result->left_command = inner_slow;
-      result->right_command = inner_slow;
-    } else if (left_outer) {
-      result->left_command = outer_slow;
-      result->right_command = outer_fast;
-    } else {
-      result->left_command = outer_fast;
-      result->right_command = outer_slow;
-    }
-  } else if (left_inner || right_inner) {
-    int8_t direction = (int8_t)((right_inner ? 1 : 0) -
-                                (left_inner ? 1 : 0));
-    LineFollow_HandleInner(direction, motor_config, result);
-  } else {
-    result->left_command = inner_slow;
-    result->right_command = inner_slow;
+  bool settling = s_exit_hold_cycles > 0U;
+  float ceiling = settling ? fminf(motor_config->base_speed, LINE_FOLLOW_TURN_ALIGN_COMMAND) :
+                             motor_config->base_speed;
+  if (s_resume_base > 0.0f) {
+    s_resume_base = fminf(ceiling, s_resume_base + LINE_FOLLOW_TURN_EXIT_STEP);
+    ceiling = s_resume_base;
+    if (!settling && s_resume_base >= motor_config->base_speed) s_resume_base = 0.0f;
   }
+  if (settling) --s_exit_hold_cycles;
+  LineFollow_VisibleCommand(motor_config, ceiling, settling ? LINE_FOLLOW_TURN_ALIGN_LIMIT :
+                            LINE_FOLLOW_POSITION_LIMIT, settling, result);
 
   result->base_speed = 0.5f * (result->left_command + result->right_command);
   return;
@@ -847,7 +777,7 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
 #if LINE_FOLLOW_DISCRETE_MODE
   else if (s_state == LINE_FOLLOW_TURNING)
   {
-    LineFollow_HandleTurn(follow_config, &result);
+    LineFollow_HandleTurn(motor_config, follow_config, &result);
   }
 #endif
   else if (result.control.track.status == LINE_TRACK_STATUS_ALL_BLACK)

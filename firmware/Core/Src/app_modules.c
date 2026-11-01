@@ -4,6 +4,7 @@
 #include "board_pins.h"
 #include "buzzer.h"
 #include "control_config.h"
+#include "control_loop.h"
 #include "lcd.h"
 #include "lcd_init.h"
 #include "line_sensor.h"
@@ -41,7 +42,6 @@ static LineFollowConfig_t s_line_follow_config = {
     LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT,
     LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
 };
-static uint32_t s_last_control_ms;
 static char s_debug_line[2][17];
 
 volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
@@ -83,20 +83,15 @@ static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
     VehicleControlOutput_t vehicle;
     AttitudeStatus attitude;
     Attitude_GetStatus(&attitude);
-    LineFollow_SetYaw(attitude.yaw_deg, attitude.yaw_ms, now_ms,
+    ControlLoop_SetYaw(attitude.yaw_deg, attitude.yaw_ms,
                        attitude.ready && attitude.live && attitude.link.frames_ok > 0U);
-
-    if ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS) {
-        s_last_control_ms = now_ms;
-        VehicleControl_Update();
-    }
+    (void)now_ms;
 
     vehicle = VehicleControl_GetOutput();
     if ((vehicle.line_follow.state == LINE_FOLLOW_FAULT) &&
         (vehicle.line_follow.control.track.status == LINE_TRACK_STATUS_NORMAL)) {
         /* The board may be powered before it is placed on the track. */
         VehicleControl_Start();
-        VehicleControl_Update();
         vehicle = VehicleControl_GetOutput();
     }
     inputs->line_valid = vehicle.line_output_valid;
@@ -124,10 +119,10 @@ void Modules_Init(void)
     MotorDriver_Init();
     VehicleControl_Init(&s_pd_config, &s_motor_command_config, &s_line_follow_config);
     VehicleControl_Start();
-    s_last_control_ms = HAL_GetTick();
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);
+    ControlLoop_Init();
     /* Motor output remains gated until the application requests FOLLOW. */
 }
 

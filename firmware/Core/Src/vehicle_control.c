@@ -4,6 +4,8 @@
 #include <stddef.h>
 
 #include "motor_driver.h"
+#include "control_atomic.h"
+#include "wheel_speed.h"
 
 volatile bool g_tracking_started = false;
 volatile bool g_motor_output_enabled = false;
@@ -81,19 +83,25 @@ void VehicleControl_Init(const PDControllerConfig_t *pd_config,
   s_latest_output.line_follow.state = LINE_FOLLOW_STOPPED;
 
   LineFollow_Init();
+  WheelSpeed_Init();
   VehicleControl_DisableMotor();
 }
 
 void VehicleControl_Start(void)
 {
+  uint32_t key = ControlAtomic_Enter();
   LineFollow_Start();
+  WheelSpeed_Init();
   g_tracking_started = true;
   g_vehicle_control_state = LINE_FOLLOW_TRACKING;
+  ControlAtomic_Exit(key);
 }
 
 void VehicleControl_Stop(void)
 {
+  uint32_t key = ControlAtomic_Enter();
   LineFollow_Stop();
+  WheelSpeed_Init();
   g_tracking_started = false;
   g_motor_output_enabled = false;
   g_left_target_command = 0.0f;
@@ -103,10 +111,12 @@ void VehicleControl_Stop(void)
   s_latest_output = (VehicleControlOutput_t){0};
   s_latest_output.line_follow = LineFollow_GetOutput();
   s_latest_output.line_follow.state = LINE_FOLLOW_STOPPED;
+  ControlAtomic_Exit(key);
 }
 
 void VehicleControl_SetMotorOutputEnabled(bool enabled)
 {
+  uint32_t key = ControlAtomic_Enter();
   if (enabled && !g_motor_output_enabled) PDController_Reset();
   g_motor_output_enabled = enabled;
 
@@ -115,6 +125,7 @@ void VehicleControl_SetMotorOutputEnabled(bool enabled)
   {
     VehicleControl_DisableMotor();
   }
+  ControlAtomic_Exit(key);
 }
 
 void VehicleControl_Update(void)
@@ -174,8 +185,10 @@ void VehicleControl_Update(void)
     return;
   }
 
-  left_command = VehicleControl_ToDriverCommand(follow.left_command);
-  right_command = VehicleControl_ToDriverCommand(follow.right_command);
+  float corrected_left = follow.left_command, corrected_right = follow.right_command;
+  WheelSpeed_Apply(&follow, s_motor_config, &corrected_left, &corrected_right);
+  left_command = VehicleControl_ToDriverCommand(corrected_left);
+  right_command = VehicleControl_ToDriverCommand(corrected_right);
 
   if (g_motor_driver_enabled == 0U)
   {
@@ -189,5 +202,8 @@ void VehicleControl_Update(void)
 
 VehicleControlOutput_t VehicleControl_GetOutput(void)
 {
-  return s_latest_output;
+  uint32_t key = ControlAtomic_Enter();
+  VehicleControlOutput_t output = s_latest_output;
+  ControlAtomic_Exit(key);
+  return output;
 }

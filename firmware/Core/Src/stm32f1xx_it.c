@@ -1,8 +1,10 @@
 #include "main.h"
+#include "control_loop.h"
 
 void SysTick_Handler(void)
 {
     HAL_IncTick();
+    ControlLoop_Tick(HAL_GetTick());
 }
 
 void HardFault_Handler(void)

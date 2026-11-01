@@ -8,6 +8,8 @@
 #include "motor_driver.h"
 #include "ultrasonic.h"
 #include "vehicle_control.h"
+#include "control_loop.h"
+#include "encoder.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -24,6 +26,12 @@ uint32_t HCI_Lap1Ms, HCI_Lap2Ms;
 uint16_t HCI_ObsCount, HCI_RevCount, HCI_SideCount;
 
 uint32_t HAL_GetTick(void) { return tick; }
+void Encoder_Init(void) { }
+EncoderCounts Encoder_Read(void) { return (EncoderCounts){0}; }
+static void advance(unsigned ms)
+{
+    while (ms--) { ++tick; ControlLoop_Tick(tick); }
+}
 void HCI_Init(void) { }
 void HCI_Update(void) { }
 void LCD_Init(void) { memset(screen, ' ', 16U); screen[16] = '\0'; }
@@ -37,7 +45,7 @@ void LCD_ShowChar(uint16_t x, uint16_t y, uint8_t c, uint16_t fg,
     assert(y == 112U && x % 8U == 0U && x < 128U);
     screen[x / 8U] = (char)c;
     if (g_motor_output_enabled) ++moving_glyphs;
-    tick += 2U;
+    advance(2U);
 }
 
 void LCD_ShowString(uint16_t x, uint16_t y, const uint8_t *s,
@@ -87,7 +95,7 @@ int main(void)
     App_Init(tick);
     while (tick < 250U) {
         App_Task(tick);
-        ++tick;
+        advance(1U);
     }
     assert(App_GetStatus().state == APP_FOLLOW_LINE && g_motor_output_enabled);
     assert(strstr(screen, FIRMWARE_REVISION_TEXT) != NULL);
@@ -96,13 +104,21 @@ int main(void)
         raw_bits = cycle % 400U < 200U ? 0x08U : 0x0AU;
         App_Task(tick);
         assert(g_motor_output_enabled && App_GetStatus().state == APP_FOLLOW_LINE);
-        ++tick;
+        advance(1U);
     }
-    assert(moving_glyphs > 0U && max_motor_gap <= 3U);
+    assert(moving_glyphs > 0U && max_motor_gap <= 1U);
+    /* A whole foreground operation can block while timer control continues. */
+    uint32_t before = g_control_call_count;
+    raw_bits = 0x0AU;
+    advance(80U);
+    assert(g_control_call_count - before == 80U && max_motor_gap == 1U);
+    before = g_control_call_count;
+    ControlLoop_Tick(tick); /* duplicate dispatch at one timestamp is ignored */
+    assert(g_control_call_count == before);
     g_app_control_request = APP_CONTROL_STOP;
     App_Task(tick);
     assert(!g_motor_output_enabled && !g_motor_driver_enabled);
-    tick += 100U;
+    advance(100U);
     App_Task(tick);
     assert(screen[1] == '0' && screen[7] == '0');
     printf("PASS: module integration, auto start, bounded debug display (max motor gap %u ms), stop refresh\n",

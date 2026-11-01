@@ -30,7 +30,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Action 
 
 `Core/Src/main.c` 使用内部 HSI / 2 × PLL16 = 64 MHz 时钟，不依赖开发板外部晶振。`App_Init()`
 会初始化 HC-SR04、四路循迹/TIM3 电机、ST7735/HCI 和 USART2 姿态模块；`App_Task()`
-在主循环中测距、按 1 ms 更新循迹、接收 MPU6050 角度帧、运行圈计时并每 100 ms
+在主循环中测距、解析 MPU6050 角度帧、运行圈计时并每 100 ms
 刷新屏幕。蜂鸣器、循迹和电机控制已接入，说明见 [BUZZER.md](BUZZER.md) 和
 [LINE_FOLLOW.md](LINE_FOLLOW.md)；视觉和停车动作仍未实现。
 
@@ -67,3 +67,6 @@ SWDIO 对应 PA13，SWCLK 对应 PA14，GND 共地。开发板需要正常的 3.
 官方参考：
 - https://www.st.com/en/microcontrollers-microprocessors/stm32f103c8.html
 - https://dev.st.com/stm32cube-docs/stm32cubeide-vscode/latest/en/docs/markup/getting_started/installation.html
+
+R7 的循迹和前进轮速反馈由 SysTick 按 1 ms 调用，使用缓存姿态和 GPIO/PWM，
+不等待显示。A 相 PA8/PB12 提供有条件启用的前进测速反馈，详见 [LINE_FOLLOW.md](LINE_FOLLOW.md)。

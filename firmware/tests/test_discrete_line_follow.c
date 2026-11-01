@@ -290,7 +290,10 @@ static void test_yaw_braking(void)
         assert(r.turn_yaw_assist);
     }
     assert(fabsf(r.turn_angle_deg - 90.0f) < 0.01f);
-    assert(r.left_command < r.right_command); /* single inner offset also needs capture */
+    assert(r.left_command > r.right_command); /* stop the high residual yaw rate */
+    LineFollow_SetYaw(wrap_yaw(179.0f + 90.0f), 1910U, 1910U, true);
+    r = step(LEFT_INNER);
+    assert(r.left_command < r.right_command); /* static offset still needs capture */
     r = step(LEFT_OUTER);
     assert(r.left_command < r.right_command); /* outside probe needs lateral capture */
     r = step(CENTER);
@@ -605,9 +608,9 @@ static void test_dynamic_corner_models(int yaw_polarity)
     printf("Dynamic corner models: yaw polarity %d, %u passed; max turn %u ticks, overshoot %.2f deg, body offset %.1f mm\n",
            yaw_polarity, total, max_turn, model_max_overshoot * 57.2957795f, model_max_body_offset * 1000.0f);
     assert(model_max_body_offset < 0.04f);
-    /* R5 gives line displacement priority over the old fixed 90-degree
-     * clamp. Bound temporary capture angle AND final lateral error. */
-    if (yaw_polarity != 0) assert(model_max_overshoot < 0.28f);
+    /* Keep R5's lateral capture and tighten the allowed temporary overshoot
+     * from about 16 degrees to 13.5 with rate damping on offset samples. */
+    if (yaw_polarity != 0) assert(model_max_overshoot * 57.2957795f < 13.5f);
     LineFollow_SetYaw(0.0f, 0U, 0U, false);
 }
 
@@ -704,6 +707,76 @@ static void learn_yaw_polarity(int polarity)
     LineFollow_SetYaw(0.0f, 0U, 0U, false);
 }
 
+/* A 20-degree heading error with the probes initially over the line models
+ * the sideways approach seen after a corner. Track width/probe offset use
+ * the measured 16.8/10 cm geometry. Add actuator lag and 100 Hz quantization. */
+static StraightMetrics heading_settling_model(float lag, float gain, float initial_heading, int polarity)
+{
+    float heading = initial_heading, y = -0.10f * sinf(heading), x = 0.0f;
+    float vl = 0.0f, vr = 0.0f, previous = 0.0f, max_tail_angle = 0.0f;
+    StraightMetrics metrics = {0};
+    uint32_t seed = 43U;
+    learn_yaw_polarity(polarity);
+    LineFollow_Start();
+    for (unsigned i = 0U; i < 12000U; ++i) {
+        uint8_t black = 0U;
+        seed = 1664525U * seed + 1013904223U;
+        float jitter = ((float)(seed >> 8) / 16777216.0f - 0.5f) * 0.002f;
+        for (unsigned bit = 0U; bit < 4U; ++bit) {
+            float sy = y + 0.10f * sinf(heading) + (1.5f - (float)bit) * 0.01f * cosf(heading);
+            if (fabsf(sy + jitter) <= 0.0075f) black |= 1U << bit;
+        }
+        if (i % 10U == 0U) {
+            float yaw = (float)polarity * heading * 57.2957795f;
+            yaw = roundf(yaw * 32768.0f / 180.0f) * 180.0f / 32768.0f;
+            LineFollow_SetYaw(wrap_yaw(yaw), i, i, true);
+        }
+        LineFollowResult_t r = step(black);
+        if (r.fault != LINE_FOLLOW_FAULT_NONE || fabsf(y) >= 0.06f) {
+            fprintf(stderr, "Heading settling failed: lag %.2f gain %.2f polarity %d angle %.3f y %.3f bits %u fault %u at %u\n",
+                    lag, gain, polarity, heading, y, black, r.fault, i);
+            assert(false);
+        }
+        vl += CONTROL_PERIOD_SECONDS / lag * (0.6f * r.left_command / 1000.0f * gain - vl);
+        vr += CONTROL_PERIOD_SECONDS / lag * (0.6f * r.right_command / 1000.0f - vr);
+        heading += (vr - vl) / 0.168f * CONTROL_PERIOD_SECONDS;
+        x += 0.5f * (vl + vr) * cosf(heading) * CONTROL_PERIOD_SECONDS;
+        y += 0.5f * (vl + vr) * sinf(heading) * CONTROL_PERIOD_SECONDS;
+        float correction = 0.5f * (r.left_command - r.right_command);
+        if (i >= 2000U) {
+            metrics.heading_rms += heading * heading;
+            metrics.lateral_rms += y * y;
+            metrics.command_variation += fabsf(correction - previous);
+            max_tail_angle = fmaxf(max_tail_angle, fabsf(heading));
+        }
+        previous = correction;
+    }
+    assert(x > 3.5f); /* must keep driving through the settling interval */
+    metrics.heading_rms = sqrtf(metrics.heading_rms / 10000.0f);
+    metrics.lateral_rms = sqrtf(metrics.lateral_rms / 10000.0f);
+    metrics.command_variation /= 10000.0f;
+    printf("Heading settling: lag %.2f gain %.2f start %+.1f polarity %d, RMS %.3f mrad, tail peak %.2f deg, lateral %.2f mm\n",
+           lag, gain, initial_heading * 57.2957795f, polarity, metrics.heading_rms * 1000.0f,
+           max_tail_angle * 57.2957795f, metrics.lateral_rms * 1000.0f);
+    return metrics;
+}
+
+static void test_heading_settling_models(void)
+{
+    for (int polarity = -1; polarity <= 1; polarity += 2) {
+        for (unsigned lag_ms = 80U; lag_ms <= 160U; lag_ms += 40U) {
+            for (int side = -1; side <= 1; side += 2) {
+                for (int gain = -1; gain <= 1; gain += 2) {
+                    StraightMetrics m = heading_settling_model((float)lag_ms / 1000.0f,
+                        1.0f + 0.03f * (float)gain, 0.34906585f * (float)side, polarity);
+                    assert(m.heading_rms < 0.003f && m.lateral_rms < 0.003f);
+                }
+            }
+        }
+    }
+    LineFollow_Init();
+}
+
 static StraightMetrics straight_model(bool baseline, float lag, float gain, float initial_heading)
 {
     float x = 0.0f, y = 0.0f, heading = initial_heading, vl = 0.0f, vr = 0.0f;
@@ -792,6 +865,10 @@ static void test_straight_models(void)
         LineFollow_SetYaw((float)polarity * 0.1f, 10U, 10U, true);
         LineFollowResult_t r = step(CENTER);
         assert(r.left_command > r.right_command); /* oppose positive physical yaw rate */
+        r = step(LEFT_INNER);
+        assert(fabsf(0.5f * (r.left_command - r.right_command)) < LINE_FOLLOW_INNER_INITIAL_CORRECTION);
+        r = step(RIGHT_INNER);
+        assert(0.5f * (r.left_command - r.right_command) > LINE_FOLLOW_INNER_INITIAL_CORRECTION);
         LineFollow_SetYaw((float)polarity * 0.1f, 10U, 111U, true);
         r = step(CENTER);
         assert(r.left_command == r.right_command); /* stale gyro must not steer */
@@ -858,6 +935,7 @@ int main(void)
     assert(fabsf(lost.left_command - lost.right_command) == LINE_FOLLOW_RECOVERY_OUTER_COMMAND);
     test_inner_steering();
     test_straight_models();
+    test_heading_settling_models();
     test_corner_sequences();
     test_corner_watchdogs();
     test_turn_alignment();

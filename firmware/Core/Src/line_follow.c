@@ -254,6 +254,17 @@ static void LineFollow_ResetInnerSteering(void)
   s_inner_correction = 0.0f;
 }
 
+static float LineFollow_DampCorrection(float correction, float limit)
+{
+  /* Brake measured rotation even while an inner probe is still off center.
+   * At zero rate the full positional correction remains available. */
+  if (s_yaw_valid && s_yaw_sign_known) {
+    float damping = -s_yaw_rate * s_yaw_command_sign * LINE_FOLLOW_STRAIGHT_RATE_GAIN;
+    correction += fmaxf(-limit, fminf(damping, limit));
+  }
+  return correction;
+}
+
 static void LineFollow_HandleInner(int8_t direction,
                                    const MotorCommandConfig_t *motor_config,
                                    LineFollowResult_t *result)
@@ -264,8 +275,8 @@ static void LineFollow_HandleInner(int8_t direction,
   MotorCommandConfig_t config = *motor_config;
 
   if (direction == 0) {
-    /* Remove steering immediately at center; filtering old commands here
-     * would keep pushing the car across the line. */
+    /* Clear positional steering at center; rate feedback below can still
+     * brake the rotation carried over from the previous off-center sample. */
     LineFollow_ResetInnerSteering();
   } else if (direction != s_inner_direction) {
     s_inner_direction = direction;
@@ -288,11 +299,7 @@ static void LineFollow_HandleInner(int8_t direction,
     }
   }
   float correction = (float)direction * s_inner_correction;
-  if ((direction == 0) && s_yaw_valid && s_yaw_sign_known) {
-    correction = -s_yaw_rate * s_yaw_command_sign * LINE_FOLLOW_STRAIGHT_RATE_GAIN;
-    correction = fmaxf(-LINE_FOLLOW_STRAIGHT_RATE_LIMIT,
-                       fminf(correction, LINE_FOLLOW_STRAIGHT_RATE_LIMIT));
-  }
+  correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_STRAIGHT_RATE_LIMIT);
   motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL, correction, &config);
   result->left_command = motor.left_command;
   result->right_command = motor.right_command;
@@ -468,6 +475,9 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
                        LINE_FOLLOW_TURN_ALIGN_KD * result->control.pd.derivative;
     correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
                        fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
+    correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_ALIGN_RATE_LIMIT);
+    correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
+                       fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
     if (result->control.track.deviation != 0.0f) {
       s_align_search_direction = (result->control.track.deviation < 0.0f) ? -1 : 1;
     }
@@ -636,6 +646,9 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
       config.base_speed = fminf(config.base_speed, LINE_FOLLOW_TURN_ALIGN_COMMAND);
       float correction = LINE_FOLLOW_TURN_ALIGN_CORRECTION * result->control.track.deviation +
                          LINE_FOLLOW_TURN_ALIGN_KD * result->control.pd.derivative;
+      correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
+                         fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
+      correction = LineFollow_DampCorrection(correction, LINE_FOLLOW_ALIGN_RATE_LIMIT);
       correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
                          fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
       result->left_command = config.base_speed + correction;

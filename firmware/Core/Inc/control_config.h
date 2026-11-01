@@ -49,10 +49,11 @@
  * Center, direction reversal, outer probes and recovery clear the ramp. */
 #define LINE_FOLLOW_INNER_INITIAL_CORRECTION         (25.0f)
 #define LINE_FOLLOW_INNER_CORRECTION_STEP             (1.0f)
-/* Rate damping only at the centered probe pair; polarity is learned during
- * a turn. No fixed heading is imposed on line acquisition or normal arcs. */
+/* Rate damping applies to both centered and offset visible-line samples.
+ * A turn teaches module polarity; line acquisition keeps its own direction. */
 #define LINE_FOLLOW_STRAIGHT_RATE_GAIN               (2.0f)
-#define LINE_FOLLOW_STRAIGHT_RATE_LIMIT              (25.0f)
+#define LINE_FOLLOW_STRAIGHT_RATE_LIMIT              (60.0f)
+#define LINE_FOLLOW_ALIGN_RATE_LIMIT                (100.0f)
 #define LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT       (940.0f)
 #define LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT       (320.0f)
 /* Sharp turns: stop the inside wheel while seeking the line.
@@ -67,7 +68,7 @@
 #define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (500U)
 #define LINE_FOLLOW_TURN_ALIGN_COMMAND               (560.0f)
 #define LINE_FOLLOW_TURN_ALIGN_CORRECTION            (80.0f)
-#define LINE_FOLLOW_TURN_ALIGN_KD                    (0.80f)
+#define LINE_FOLLOW_TURN_ALIGN_KD                    (0.20f)
 #define LINE_FOLLOW_TURN_ALIGN_LIMIT                 (140.0f)
 #define LINE_FOLLOW_TURN_ALIGN_GAP_CORRECTION         (80.0f)
 #define LINE_FOLLOW_TURN_ALIGN_SOFT_GAP_CYCLES         (40U)
@@ -87,7 +88,7 @@
 #define LINE_FOLLOW_WHITE_GRACE_CYCLES                (12U)
 #define LINE_FOLLOW_RECOVERY_OUTER_COMMAND           (700.0f)
 #define LINE_FOLLOW_BLACK_CONFIRM_CYCLES              (12U)
-#define FIRMWARE_REVISION_TEXT                       "R5"
+#define FIRMWARE_REVISION_TEXT                       "R6"
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)
 #endif

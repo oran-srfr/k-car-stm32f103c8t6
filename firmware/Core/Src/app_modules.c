@@ -15,7 +15,7 @@
 /* ============================================================================
  * 屏幕调试信息开关（详见 Debug_Display 上方的说明）
  *
- *   0 = 只显示变化缓慢的状态字段（默认，几乎零开销）
+ *   0 = 只显示状态字段；运动中每次至多更新一个变化字符
  *   1 = 额外显示黑线位图和左右轮实际输出，会每 100ms 重画一次，明显拖慢控制
  * ========================================================================== */
 #define DEBUG_LCD_FULL   0
@@ -252,6 +252,13 @@ static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
 
     for (i = 0U; i < 16U; ++i) {
         if (s_debug_line[index][i] != text[i]) {
+            if (g_motor_output_enabled) {
+                /* Bound the foreground pause while steering. Repainting all
+                 * 16 glyphs here can hold an old turn command for ~22 ms. */
+                s_debug_line[index][i] = text[i];
+                LCD_ShowChar((uint16_t)i * 8U, y, (uint8_t)text[i], color, BLACK, 16U, 0U);
+                return;
+            }
             for (i = 0U; i < 16U; ++i) {
                 s_debug_line[index][i] = text[i];
             }
@@ -267,8 +274,8 @@ static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
  * 软件 SPI 刷屏很贵：一个 8x16 字符 = 128 像素 = 256 字节 = 2048 次电平翻转。
  * 16 个字符一行 ≈ 1.2M 周期，8MHz 下约 175ms、64MHz 下约 22ms。
  *
- * 所以默认只显示「变化缓慢」的字段（S/E/L/O），平时不动 → 脏标记挡住重绘
- * → 几乎零开销。DEBUG_LCD_FULL=1 才显示会持续变化的内容。
+ * T/A/P 也可能在纠偏时变化。运动中每次最多重绘一个变化字符，
+ * 停车时才允许整行刷新，避免一次刷新阻塞十几个控制周期。
  * ========================================================================== */
 static void Debug_Display(const AppStatus *status)
 {

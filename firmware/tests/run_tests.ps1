@@ -23,7 +23,7 @@ try {
         Write-Host "==> $Name"
         $exe = Join-Path $out "$Name.exe"
         $arguments = @('-std=c11', '-Wall', '-Wextra', '-Werror', '-O1',
-                       '-ICore/Inc') + $Extra + $Sources + @('-o', $exe, '-lm')
+                       '-ICore/Inc', '-Itests') + $Extra + $Sources + @('-o', $exe, '-lm')
         & $gcc.Source @arguments
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Compile failed: $Name" -ForegroundColor Red
@@ -38,13 +38,15 @@ try {
     }
 
     Invoke-Test -Name 'test_app' -Sources @('Core/Src/app.c', 'tests/test_app.c')
+    Invoke-Test -Name 'test_wheel_speed' -Sources @('Core/Src/wheel_speed.c', 'tests/test_wheel_speed.c')
     Invoke-Test -Name 'test_ultrasonic' -Sources @('Core/Src/ultrasonic.c', 'tests/test_ultrasonic.c')
     Invoke-Test -Name 'test_buzzer' -Sources @('Core/Src/buzzer.c', 'tests/test_buzzer.c')
     Invoke-Test -Name 'test_laptimer' -Sources @('Core/Src/LapTimer.c', 'tests/test_laptimer.c')
     Invoke-Test -Name 'test_mpulink' -Sources @('Core/Src/MpuLink.c', 'tests/test_mpulink.c') -Extra @('-Itests')
     Invoke-Test -Name 'test_tracking' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'tests/test_tracking.c')
     Invoke-Test -Name 'test_line_follow_pd' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_line_follow.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=0')
-    Invoke-Test -Name 'test_discrete_line_follow' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_discrete_line_follow.c')
+    Invoke-Test -Name 'test_discrete_line_follow' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'Core/Src/vehicle_control.c', 'Core/Src/wheel_speed.c', 'tests/test_discrete_line_follow.c')
+    Invoke-Test -Name 'test_app_modules' -Sources @('Core/Src/app.c', 'Core/Src/app_modules.c', 'Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'Core/Src/vehicle_control.c', 'Core/Src/wheel_speed.c', 'Core/Src/control_loop.c', 'tests/test_app_modules.c')
 
     if ($script:failed -ne 0) {
         Write-Host "$($script:failed) test executable(s) failed." -ForegroundColor Red

@@ -1,6 +1,7 @@
 #include "ultrasonic.h"
 #include "ultrasonic_port.h"
 #include "board_pins.h"
+#include "encoder.h"
 
 uint32_t UlrHw_Lock(void)
 {
@@ -95,8 +96,10 @@ void TIM4_IRQHandler(void)
 
 void EXTI9_5_IRQHandler(void)
 {
-    /* EXTI5 is the only enabled line in this group today. Add dispatch if
-     * future modules enable EXTI6..9; never define a second group handler. */
+    if (__HAL_GPIO_EXTI_GET_IT(ENCODER_LEFT_PIN) != 0U) {
+        __HAL_GPIO_EXTI_CLEAR_IT(ENCODER_LEFT_PIN);
+        Encoder_LeftEdge();
+    }
     if (__HAL_GPIO_EXTI_GET_IT(SONAR_ECHO_PIN) != 0U) {
         uint16_t counter = UlrHw_Counter();
         bool high = UlrHw_EchoHigh();

@@ -121,6 +121,9 @@ static void test_invalid_and_stop(void)
     assert(App_GetStatus().error == APP_ERROR_NONE);
     assert(App_GetStatus().auto_start_armed);
     for (unsigned now = 214; now <= 404; now += 10) { step(now); }
+    /* Clearing the fault at 204 resets qualification; it begins at 214. */
+    assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
+    step(414);
     assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
 }
 

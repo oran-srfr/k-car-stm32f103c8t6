@@ -25,6 +25,9 @@ add_executable(k_car
     Core/Src/motor_driver.c
     Core/Src/pd_controller.c
     Core/Src/vehicle_control.c
+    Core/Src/control_loop.c
+    Core/Src/encoder_stm32.c
+    Core/Src/wheel_speed.c
     Core/Src/zk.c
     Core/Src/ultrasonic.c
     Core/Src/ultrasonic_stm32.c
@@ -55,7 +58,7 @@ target_include_directories(k_car PRIVATE
     ${HAL_DIR}/Inc/Legacy
 )
 target_compile_options(k_car PRIVATE
-    -Wall -Wextra -ffunction-sections -fdata-sections
+    -Wall -Wextra -ffunction-sections -fdata-sections -fstack-usage
     $<$<CONFIG:Debug>:-Og>
     $<$<CONFIG:Debug>:-g3>
 )

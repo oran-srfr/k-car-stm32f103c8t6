@@ -4,6 +4,7 @@
 #include "board_pins.h"
 #include "buzzer.h"
 #include "control_config.h"
+#include "control_loop.h"
 #include "lcd.h"
 #include "lcd_init.h"
 #include "line_sensor.h"
@@ -15,7 +16,7 @@
 /* ============================================================================
  * 屏幕调试信息开关（详见 Debug_Display 上方的说明）
  *
- *   0 = 只显示变化缓慢的状态字段（默认，几乎零开销）
+ *   0 = 只显示状态字段；运动中每次至多更新一个变化字符
  *   1 = 额外显示黑线位图和左右轮实际输出，会每 100ms 重画一次，明显拖慢控制
  * ========================================================================== */
 #define DEBUG_LCD_FULL   0
@@ -41,7 +42,6 @@ static LineFollowConfig_t s_line_follow_config = {
     LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT,
     LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT
 };
-static uint32_t s_last_control_ms;
 static char s_debug_line[2][17];
 
 volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
@@ -49,6 +49,9 @@ volatile LineTrackStatus_t g_tracking_status = LINE_TRACK_STATUS_LOST;
 volatile uint8_t g_tracking_raw_bits = 0x0FU;
 volatile uint8_t g_tracking_bits = 0U;
 volatile float g_tracking_deviation = 0.0f;
+volatile LineFollowFault_t g_tracking_fault = LINE_FOLLOW_FAULT_NONE;
+volatile LineFollowTurnPhase_t g_tracking_turn_phase = LINE_FOLLOW_TURN_NONE;
+volatile bool g_tracking_yaw_assist = false;
 
 static void HMI_Poll(AppInputs *inputs)
 {
@@ -78,18 +81,17 @@ static void Mpu_Poll(uint32_t now_ms)
 static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
 {
     VehicleControlOutput_t vehicle;
-
-    if ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS) {
-        s_last_control_ms = now_ms;
-        VehicleControl_Update();
-    }
+    AttitudeStatus attitude;
+    Attitude_GetStatus(&attitude);
+    ControlLoop_SetYaw(attitude.yaw_deg, attitude.yaw_ms,
+                       attitude.ready && attitude.live && attitude.link.frames_ok > 0U);
+    (void)now_ms;
 
     vehicle = VehicleControl_GetOutput();
     if ((vehicle.line_follow.state == LINE_FOLLOW_FAULT) &&
         (vehicle.line_follow.control.track.status == LINE_TRACK_STATUS_NORMAL)) {
         /* The board may be powered before it is placed on the track. */
         VehicleControl_Start();
-        VehicleControl_Update();
         vehicle = VehicleControl_GetOutput();
     }
     inputs->line_valid = vehicle.line_output_valid;
@@ -99,6 +101,9 @@ static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
     g_tracking_raw_bits = vehicle.line_follow.control.raw_bits;
     g_tracking_bits = vehicle.line_follow.control.track.black_bits;
     g_tracking_deviation = vehicle.line_follow.control.track.deviation;
+    g_tracking_fault = vehicle.line_follow.fault;
+    g_tracking_turn_phase = vehicle.line_follow.turn_phase;
+    g_tracking_yaw_assist = vehicle.line_follow.turn_yaw_assist;
 }
 
 static void Parking_Poll(AppInputs *inputs)
@@ -114,10 +119,10 @@ void Modules_Init(void)
     MotorDriver_Init();
     VehicleControl_Init(&s_pd_config, &s_motor_command_config, &s_line_follow_config);
     VehicleControl_Start();
-    s_last_control_ms = HAL_GetTick();
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);
+    ControlLoop_Init();
     /* Motor output remains gated until the application requests FOLLOW. */
 }
 
@@ -144,6 +149,7 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
 
 void Modules_RunStarted(AppMode mode, uint32_t now_ms)
 {
+    VehicleControl_Start();
     if (mode == APP_MODE_LAPS) {
         Attitude_StartLap(now_ms);
     } else {
@@ -241,6 +247,13 @@ static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
 
     for (i = 0U; i < 16U; ++i) {
         if (s_debug_line[index][i] != text[i]) {
+            if (g_motor_output_enabled) {
+                /* Bound the foreground pause while steering. Repainting all
+                 * 16 glyphs here can hold an old turn command for ~22 ms. */
+                s_debug_line[index][i] = text[i];
+                LCD_ShowChar((uint16_t)i * 8U, y, (uint8_t)text[i], color, BLACK, 16U, 0U);
+                return;
+            }
             for (i = 0U; i < 16U; ++i) {
                 s_debug_line[index][i] = text[i];
             }
@@ -256,8 +269,8 @@ static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
  * 软件 SPI 刷屏很贵：一个 8x16 字符 = 128 像素 = 256 字节 = 2048 次电平翻转。
  * 16 个字符一行 ≈ 1.2M 周期，8MHz 下约 175ms、64MHz 下约 22ms。
  *
- * 所以默认只显示「变化缓慢」的字段（S/E/L/O），平时不动 → 脏标记挡住重绘
- * → 几乎零开销。DEBUG_LCD_FULL=1 才显示会持续变化的内容。
+ * T/A/P 也可能在纠偏时变化。运动中每次最多重绘一个变化字符，
+ * 停车时才允许整行刷新，避免一次刷新阻塞十几个控制周期。
  * ========================================================================== */
 static void Debug_Display(const AppStatus *status)
 {
@@ -269,10 +282,17 @@ static void Debug_Display(const AppStatus *status)
     DebugLine_AppendU16(line, (uint16_t)status->state, 1U);
     DebugLine_Append(line, "E");
     DebugLine_AppendU16(line, (uint16_t)status->error, 1U);
-    DebugLine_Append(line, "L");
-    DebugLine_AppendU16(line, (uint16_t)g_tracking_status, 1U);
+    DebugLine_Append(line, "A");
+    DebugLine_AppendU16(line, g_tracking_yaw_assist ? 1U : 0U, 1U);
     DebugLine_Append(line, "O");
     DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
+    DebugLine_Append(line, "T");
+    DebugLine_AppendU16(line, (uint16_t)g_vehicle_control_state, 1U);
+    DebugLine_Append(line, "F");
+    DebugLine_AppendU16(line, (uint16_t)g_tracking_fault, 1U);
+    DebugLine_Append(line, "P");
+    DebugLine_AppendU16(line, (uint16_t)g_tracking_turn_phase, 1U);
+    DebugLine_Append(line, FIRMWARE_REVISION_TEXT);
     DebugLine_Show(112U, 0U, line, WHITE);
 
 #if DEBUG_LCD_FULL

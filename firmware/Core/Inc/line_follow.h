@@ -2,6 +2,7 @@
 #define LINE_FOLLOW_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "line_control.h"
 #include "motor_command.h"
@@ -13,7 +14,8 @@ typedef enum
   LINE_FOLLOW_LINE_LOST,
   LINE_FOLLOW_SEARCHING,
   LINE_FOLLOW_REACQUIRE,
-  LINE_FOLLOW_FAULT
+  LINE_FOLLOW_FAULT,
+  LINE_FOLLOW_TURNING
 } LineFollowState_t;
 
 typedef enum
@@ -22,8 +24,16 @@ typedef enum
   LINE_FOLLOW_FAULT_LOST_TIMEOUT,
   LINE_FOLLOW_FAULT_ALL_BLACK,
   LINE_FOLLOW_FAULT_NO_VALID_HISTORY,
-  LINE_FOLLOW_FAULT_INVALID_INPUT
+  LINE_FOLLOW_FAULT_INVALID_INPUT,
+  LINE_FOLLOW_FAULT_TURN_TIMEOUT
 } LineFollowFault_t;
+
+typedef enum
+{
+  LINE_FOLLOW_TURN_NONE = 0U,
+  LINE_FOLLOW_TURN_SEEK,
+  LINE_FOLLOW_TURN_ALIGN
+} LineFollowTurnPhase_t;
 
 typedef struct
 {
@@ -49,6 +59,10 @@ typedef struct
   float base_speed;
   float left_command;
   float right_command;
+  LineFollowTurnPhase_t turn_phase;
+  uint16_t turn_cycles;              /* Last/current turn duration, for diagnosis. */
+  bool turn_yaw_assist;
+  float turn_angle_deg;
 } LineFollowResult_t;
 
 /** 初始化循迹模块；上电默认进入 STOPPED，所有命令为 0。 */
@@ -59,6 +73,10 @@ void LineFollow_Start(void);
 
 /** 立即进入停止状态，软件左右目标命令保持为 0。 */
 void LineFollow_Stop(void);
+
+/** Feed current MPU yaw before Update. Stale/invalid frames disable yaw assist
+ * for the current turn; line feedback and watchdogs remain operational. */
+void LineFollow_SetYaw(float yaw_deg, uint32_t sample_ms, uint32_t now_ms, bool valid);
 
 /** 执行一次状态机更新；只生成软件目标命令，不访问电机硬件。 */
 LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,

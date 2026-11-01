@@ -33,31 +33,65 @@
 #define LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT         (10U)
 #define LINE_FOLLOW_CURVE_HOLD_CYCLES                (20U)
 #define LINE_FOLLOW_BASE_STEP                       (10.0f)
-/* 同方向偏差持续 30 ms，或已到外探头时进入强修正。
- * 45% 内轮下限只在强修正中启用；普通循迹仍保持 55% 下限。 */
+/* Legacy PD fallback only; production visible-line steering uses POSITION_* below. */
 #define LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES         (3U)
 #define LINE_FOLLOW_HARD_TURN_DEVIATION              (1.5f)
 #define LINE_FOLLOW_HARD_TURN_MIN_FORWARD            (450.0f)
 #define LINE_FOLLOW_HARD_TURN_GAIN                   (1.25f)
-/* Direct four-sensor recovery uses a two-wheel differential at all times.
- * 2026-10 修正①：原来 500/700（差速 20%）、500/770（27%），力度是常数、与偏差无关。
- * 2026-10 修正②：一度拉到 380/830（差速 45%），结果直线摆头 —— 过冲。
- * 2026-10 修正③（治摆头）：单内探头 480/680，差速降到 200。
- *   几何依据：R = (W/2)·(v1+v2)/(v1-v2)，W=150mm 时
- *     差速 450 → 半径 19cm（远超需要，必然冲过头）
- *     差速 200 → 半径 43cm（刚好跟上 R60 半圆，直线也不会画龙）
- *     差速 145 → 半径 60cm（R60 的临界值，没有余量）
- *   外侧保留大差速 320/940，专治直角与急弯 —— 外侧探头压线说明偏差已经很大，
- *   此时才需要半径 14cm 的猛转。只压内探头时给猛转就是摆头的根源。
- * 若仍轻微摆头 → _INNER 继续收到 500/660；若弧线跟不上 → 放到 450/710。 */
-#define LINE_FOLLOW_INNER_FAST_COMMAND_DEFAULT       (680.0f)
-#define LINE_FOLLOW_INNER_SLOW_COMMAND_DEFAULT       (480.0f)
-#define LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT       (940.0f)
-#define LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT       (320.0f)
-/* 四灯全灭时先「直行」多少个控制周期再开始差速搜索。
- * 80 周期 ≈ 80 ms —— 丢线后还要直冲 80 ms 才肯找线，弯道上这就是「反应慢」。
- * 收到 25 周期（≈25 ms），一丢线几乎立刻开始朝最后方向找。 */
-#define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (25U)
+/* Unified visible-line steering; fixed 1 ms task, no error-time ramp. */
+#define LINE_FOLLOW_POSITION_KP                    (60.0f)
+#define LINE_FOLLOW_POSITION_KPP                   (10.0f)
+#define LINE_FOLLOW_POSITION_KD                    (0.02f)
+#define LINE_FOLLOW_POSITION_ALPHA                 (0.25f)
+#define LINE_FOLLOW_POSITION_D_LIMIT                (20.0f)
+#define LINE_FOLLOW_POSITION_LIMIT                 (160.0f)
+#define LINE_FOLLOW_STEER_SLOWDOWN                  (0.20f)
+#define LINE_FOLLOW_EXIT_MAX_RATE                   (25.0f)
+/* Fresh measured yaw rate damps the unified position controller. */
+#define LINE_FOLLOW_RATE_GAIN                       (2.0f)
+#define LINE_FOLLOW_RATE_LIMIT                    (100.0f)
+/* Sharp turns: stop the inside wheel while seeking the line.
+ * A three-probe corner pattern or an outer-probe -> lost transition starts
+ * the turn. A continuously visible outer probe remains ordinary steering. */
+#define LINE_FOLLOW_TURN_OUTER_COMMAND                (800.0f)
+#define LINE_FOLLOW_TURN_INNER_COMMAND                (0.0f)
+#define LINE_FOLLOW_TURN_MIN_CYCLES                   (60U)
+#define LINE_FOLLOW_TURN_MAX_CYCLES                   (4500U)
+#define LINE_FOLLOW_TURN_MAX_LOST_CYCLES              (3000U)
+#define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (500U)
+#define LINE_FOLLOW_TURN_ALIGN_COMMAND               (560.0f)
+#define LINE_FOLLOW_TURN_ALIGN_LIMIT                 (140.0f)
+#define LINE_FOLLOW_TURN_ALIGN_GAP_CORRECTION         (80.0f)
+#define LINE_FOLLOW_TURN_ALIGN_SOFT_GAP_CYCLES         (40U)
+#define LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES             (200U)
+#define LINE_FOLLOW_TURN_REACQUIRE_CYCLES             (30U)
+#define LINE_FOLLOW_TURN_EXIT_STEP                   (1.0f)
+/* Yaw is relative to turn entry; module polarity is handled automatically. */
+#define LINE_FOLLOW_YAW_MAX_AGE_MS                    (100U)
+#define LINE_FOLLOW_YAW_MAX_STEP_DEG                 (45.0f)
+#define LINE_FOLLOW_YAW_TARGET_DEG                   (90.0f)
+#define LINE_FOLLOW_YAW_SLOW_DEG                     (80.0f)
+#define LINE_FOLLOW_YAW_COAST_SECONDS                (0.08f)
+#define LINE_FOLLOW_YAW_GAIN                         (15.0f)
+#define LINE_FOLLOW_YAW_BRAKE_LIMIT                  (200.0f)
+#define LINE_FOLLOW_YAW_EXIT_MARGIN_DEG              (12.0f)
+#define LINE_FOLLOW_TURN_SETTLE_CYCLES                   (500U)
+#define LINE_FOLLOW_WHITE_GRACE_CYCLES                (12U)
+#define LINE_FOLLOW_RECOVERY_OUTER_COMMAND           (700.0f)
+#define LINE_FOLLOW_BLACK_CONFIRM_CYCLES              (12U)
+/* Forward A-channel pulse feedback, normalized to learned low-speed duty.
+ * It never raises the mean command; sharp turns and missing counts bypass it. */
+#ifndef WHEEL_SPEED_ENABLED_DEFAULT
+#define WHEEL_SPEED_ENABLED_DEFAULT                 (1U)
+#endif
+#define WHEEL_SPEED_WINDOW_MS                       (100U)
+#define WHEEL_SPEED_LEARN_WINDOWS                     (3U)
+#define WHEEL_SPEED_MIN_EDGES                        (10U)
+#define WHEEL_SPEED_KP                              (20.0f)
+#define WHEEL_SPEED_KI                              (15.0f)
+#define WHEEL_SPEED_MAX_CORRECTION                  (15.0f)
+#define WHEEL_SPEED_LEARN_TOLERANCE                 (0.02f)
+#define FIRMWARE_REVISION_TEXT                       "R7"
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)
 #endif

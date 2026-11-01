@@ -1,4 +1,4 @@
-/* 仅用于电脑上跑 MpuLink 单元测试的最小 HAL 桩，不参与固件编译 */
+/* 仅用于电脑上跑主机测试的最小 HAL 桩，不参与固件编译 */
 #ifndef STM32F1XX_HAL_H_TEST_STUB
 #define STM32F1XX_HAL_H_TEST_STUB
 
@@ -16,5 +16,6 @@ typedef struct {
 } UART_HandleTypeDef;
 
 HAL_StatusTypeDef HAL_UART_Receive_IT(UART_HandleTypeDef *h, uint8_t *data, uint16_t size);
+uint32_t HAL_GetTick(void);
 
 #endif /* STM32F1XX_HAL_H_TEST_STUB */

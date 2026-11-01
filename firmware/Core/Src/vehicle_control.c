@@ -107,6 +107,7 @@ void VehicleControl_Stop(void)
 
 void VehicleControl_SetMotorOutputEnabled(bool enabled)
 {
+  if (enabled && !g_motor_output_enabled) PDController_Reset();
   g_motor_output_enabled = enabled;
 
   /* 关闭门控必须立即生效；打开门控留到下一次Update判断状态。 */
@@ -135,6 +136,22 @@ void VehicleControl_Update(void)
     return;
   }
 
+  if (!g_motor_output_enabled) {
+    /* Observe launch readiness without consuming a stopped car's budgets. */
+    follow = LineFollow_GetOutput();
+    follow.control = LineControl_Sample(s_pd_config);
+    follow.base_speed = 0.0f;
+    follow.left_command = follow.right_command = 0.0f;
+    g_left_target_command = g_right_target_command = 0.0f;
+    g_vehicle_control_state = follow.state;
+    ++g_control_call_count;
+    output_valid = g_tracking_started && follow.fault == LINE_FOLLOW_FAULT_NONE &&
+                   VehicleControl_StateAllowsMotion(follow.state) &&
+                   follow.control.control_status != LINE_CONTROL_STATUS_INVALID_INPUT_STOP;
+    VehicleControl_DisableMotor();
+    VehicleControl_SaveOutput(&follow, output_valid);
+    return;
+  }
   /* 一次Update只执行一次完整循迹计算，再读取一次缓存输出。 */
   (void)LineFollow_Update(s_pd_config, s_motor_config, s_follow_config);
   follow = LineFollow_GetOutput();

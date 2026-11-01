@@ -290,7 +290,11 @@ static void test_yaw_braking(void)
         assert(r.turn_yaw_assist);
     }
     assert(fabsf(r.turn_angle_deg - 90.0f) < 0.01f);
-    assert(r.left_command > r.right_command); /* brake a left turn before coasting farther */
+    assert(r.left_command < r.right_command); /* single inner offset also needs capture */
+    r = step(LEFT_OUTER);
+    assert(r.left_command < r.right_command); /* outside probe needs lateral capture */
+    r = step(CENTER);
+    assert(r.left_command > r.right_command); /* brake only after the line is centered */
     assert(r.left_command <= 1000.0f && r.right_command >= 0.0f);
 
     LineFollow_SetYaw(-91.0f, 1900U, 2001U, true); /* stale despite caller saying valid */
@@ -360,6 +364,74 @@ static void test_corner_watchdogs(void)
     expect(CENTER, CONTROL_BASE_SPEED_DEFAULT, CONTROL_BASE_SPEED_DEFAULT);
 }
 
+static void test_power_on_and_pause(void)
+{
+    for (unsigned trial = 0U; trial < 4U; ++trial) {
+        VehicleControl_Init(&pd, &motor, &follow);
+        VehicleControl_Start();
+        for (unsigned i = 0U; i < 5000U; ++i) {
+            raw_bits = physical_to_raw((i + trial) % 3U == 0U ? 0U :
+                                       ((i + trial) % 3U == 1U ? 15U : LEFT_OUTER | CENTER));
+            VehicleControl_Update();
+            VehicleControlOutput_t out = VehicleControl_GetOutput();
+            assert(out.line_follow.state == LINE_FOLLOW_TRACKING);
+            assert(out.line_follow.fault == LINE_FOLLOW_FAULT_NONE);
+            assert(out.line_follow.turn_cycles == 0U && out.line_follow.lost_cycles == 0U);
+            assert(out.left_applied_command == 0 && out.right_applied_command == 0);
+        }
+        raw_bits = physical_to_raw(CENTER);
+        VehicleControl_Update();
+        VehicleControlOutput_t out = VehicleControl_GetOutput();
+        assert(out.line_output_valid && out.line_follow.control.track.status == LINE_TRACK_STATUS_NORMAL);
+        VehicleControl_SetMotorOutputEnabled(true);
+        raw_bits = physical_to_raw(LEFT_OUTER | CENTER);
+        VehicleControl_Update();
+        out = VehicleControl_GetOutput();
+        assert(out.line_follow.state == LINE_FOLLOW_TURNING && out.line_follow.turn_cycles == 1U);
+        VehicleControl_SetMotorOutputEnabled(false);
+        for (unsigned i = 0U; i < 5000U; ++i) VehicleControl_Update();
+        out = VehicleControl_GetOutput();
+        assert(out.line_follow.turn_cycles == 1U && out.line_follow.fault == LINE_FOLLOW_FAULT_NONE);
+        assert(out.left_applied_command == 0 && out.right_applied_command == 0);
+        VehicleControl_SetMotorOutputEnabled(true);
+        VehicleControl_Update();
+        out = VehicleControl_GetOutput();
+        assert(out.line_follow.turn_cycles == 2U && out.line_follow.fault == LINE_FOLLOW_FAULT_NONE);
+        VehicleControl_Stop();
+    }
+}
+
+static void test_glitches_and_recovery_budget(void)
+{
+    LineFollow_SetYaw(0.0f, 0U, 0U, false);
+    LineFollow_Start();
+    (void)step(LEFT_INNER);
+    for (unsigned i = 0U; i < LINE_FOLLOW_BLACK_CONFIRM_CYCLES; ++i) {
+        assert(step(15U).fault == LINE_FOLLOW_FAULT_NONE);
+    }
+    assert(step(15U).fault == LINE_FOLLOW_FAULT_ALL_BLACK);
+    assert(step(CENTER).state == LINE_FOLLOW_FAULT);
+    LineFollow_Start();
+    (void)step(LEFT_INNER);
+    (void)step(15U);
+    assert(step(CENTER).fault == LINE_FOLLOW_FAULT_NONE);
+    for (unsigned i = 0U; i < 20U; ++i) {
+        assert(step(0U).fault == LINE_FOLLOW_FAULT_NONE);
+    }
+    LineFollowResult_t r = step(RIGHT_INNER);
+    assert(r.state == LINE_FOLLOW_REACQUIRE && r.lost_cycles == 20U);
+    r = step(0U);
+    assert(r.lost_cycles == 21U); /* one black sample does not forgive the budget */
+    for (unsigned i = 0U; i < 5U; ++i) r = step(CENTER);
+    assert(step(15U).fault == LINE_FOLLOW_FAULT_NONE);
+    for (unsigned i = 0U; i < 5U; ++i) r = step(CENTER);
+    assert(r.state == LINE_FOLLOW_REACQUIRE && r.lost_cycles == 21U);
+    for (unsigned i = 0U; i < 5U; ++i) r = step(CENTER);
+    assert(r.state == LINE_FOLLOW_TRACKING && r.lost_cycles == 0U);
+    for (unsigned i = 0U; i <= follow.max_lost_cycles; ++i) r = step(0U);
+    assert(r.fault == LINE_FOLLOW_FAULT_LOST_TIMEOUT);
+}
+
 static void test_vehicle_turn_gating(void)
 {
     MotorCommandConfig_t bad = motor;
@@ -394,7 +466,7 @@ static void test_vehicle_turn_gating(void)
 static float corner_distance(float x, float y)
 {
     float dx = x - fmaxf(0.0f, fminf(x, 0.5f));
-    float dy = y - fmaxf(0.0f, fminf(y, 0.6f));
+    float dy = y - fmaxf(0.0f, fminf(y, 1.2f));
     return fminf(hypotf(dx, y), hypotf(x - 0.5f, dy));
 }
 
@@ -442,6 +514,7 @@ static void test_corner_model(float mirror, float left_gain, float heading)
 static unsigned max_turn, max_lost;
 static float model_max_overshoot, model_max_body_offset;
 static float model_dead_zone;
+static float model_exit_shift;
 
 static float probe_speed_command(float command, float scale)
 {
@@ -454,9 +527,15 @@ static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
 {
     float x = 0.1f, y = 0.0f, heading = 0.0f, vl = 0.0f, vr = 0.0f;
     unsigned turn_samples = 0U;
+    bool shifted = false;
+    LineFollow_Init(); /* each model represents an independent power-on */
     LineFollow_SetYaw(179.0f, 0U, 0U, yaw_polarity != 0);
     LineFollow_Start();
-    for (unsigned cycle = 0U; cycle < 100000U; ++cycle) {
+    for (unsigned cycle = 0U; cycle < 200000U; ++cycle) {
+        if (!shifted && mirror * y > 0.08f) {
+            x += model_exit_shift;
+            shifted = true;
+        }
         uint8_t black = 0U;
         for (unsigned bit = 0U; bit < 4U; ++bit) {
             float lateral = (1.5f - (float)bit) * 0.01f;
@@ -485,9 +564,10 @@ static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
         y += 0.5f * (vl + vr) * sinf(heading) * CONTROL_PERIOD_SECONDS;
         if (mirror * y > 0.03f) model_max_overshoot = fmaxf(model_max_overshoot, mirror * heading - 1.570796327f);
         if (mirror * y > 0.10f) model_max_body_offset = fmaxf(model_max_body_offset, fabsf(x - 0.5f));
-        if (mirror * y > 0.3f) {
-            bool complete = fabsf(x - 0.5f) < 0.035f &&
-                            mirror * sinf(heading) > 0.95f && turn_samples > 0U;
+        if (mirror * y > 0.6f) {
+            bool complete = fabsf(x - 0.5f) < 0.015f &&
+                            mirror * sinf(heading) > 0.95f && turn_samples > 0U &&
+                            r.state == LINE_FOLLOW_TRACKING;
             if (!complete) {
                 fprintf(stderr, "Corner dynamics missed exit: offset %.2f speed %.2f lag %.2f gain %.2f side %+.0f xy %.3f %.3f angle %.2f\n",
                         sensor_offset, scale, lag, left_gain, mirror, x, y, heading);
@@ -525,8 +605,33 @@ static void test_dynamic_corner_models(int yaw_polarity)
     printf("Dynamic corner models: yaw polarity %d, %u passed; max turn %u ticks, overshoot %.2f deg, body offset %.1f mm\n",
            yaw_polarity, total, max_turn, model_max_overshoot * 57.2957795f, model_max_body_offset * 1000.0f);
     assert(model_max_body_offset < 0.04f);
-    if (yaw_polarity != 0) assert(model_max_overshoot < 0.21f);
+    /* R5 gives line displacement priority over the old fixed 90-degree
+     * clamp. Bound temporary capture angle AND final lateral error. */
+    if (yaw_polarity != 0) assert(model_max_overshoot < 0.28f);
     LineFollow_SetYaw(0.0f, 0U, 0U, false);
+}
+
+static void test_displaced_corner_exit(void)
+{
+    unsigned total = 0U;
+    model_dead_zone = 250.0f;
+    for (int polarity = -1; polarity <= 1; polarity += 2) {
+        for (int side = -1; side <= 1; side += 2) {
+            for (int shift = -1; shift <= 1; shift += 2) {
+                model_exit_shift = (float)shift * 0.02f;
+                for (unsigned lag = 0U; lag < 2U; ++lag) {
+                    for (unsigned gain = 0U; gain < 2U; ++gain) {
+                        assert(dynamic_corner_model(0.10f, 0.60f, lag ? 0.08f : 0.04f,
+                                                    gain ? 1.03f : 0.97f, (float)side, polarity));
+                        ++total;
+                    }
+                }
+            }
+        }
+    }
+    printf("Displaced corner exits: %u passed, 20 mm disturbance in both directions\n", total);
+    model_exit_shift = 0.0f;
+    LineFollow_Init();
 }
 
 static float arc_distance(float x, float y)
@@ -582,12 +687,31 @@ typedef struct {
 /* Model assumptions: same 14 cm / 8 cm geometry as the corner model, 1 mm
  * threshold jitter and 40..120 ms first-order motor lag. Baseline is branch1pro
  * 4fa7740's inner-only 480/680 law. No measured hardware parameters are implied. */
+static int straight_yaw_polarity;
+
+static void learn_yaw_polarity(int polarity)
+{
+    LineFollow_Init();
+    LineFollow_SetYaw(0.0f, 10000U, 10000U, true);
+    LineFollow_Start();
+    (void)step(LEFT_OUTER | CENTER);
+    for (unsigned i = 1U; i <= 10U; ++i) {
+        LineFollow_SetYaw((float)polarity * (float)i, 10000U + i * 10U,
+                           10000U + i * 10U, true);
+        (void)step(LEFT_OUTER);
+    }
+    LineFollow_Stop();
+    LineFollow_SetYaw(0.0f, 0U, 0U, false);
+}
+
 static StraightMetrics straight_model(bool baseline, float lag, float gain, float initial_heading)
 {
     float x = 0.0f, y = 0.0f, heading = initial_heading, vl = 0.0f, vr = 0.0f;
     float previous = 0.0f;
     uint32_t seed = 43U;
     StraightMetrics metrics = {0};
+    if (straight_yaw_polarity != 0) learn_yaw_polarity(straight_yaw_polarity);
+    else LineFollow_Init();
     LineFollow_Start();
     for (unsigned i = 0U; i < 8000U; ++i) {
         uint8_t black = 0U;
@@ -598,6 +722,11 @@ static StraightMetrics straight_model(bool baseline, float lag, float gain, floa
             if (fabsf(sy + jitter) <= 0.0075f) black |= (1U << bit);
         }
         assert(black == CENTER || black == LEFT_INNER || black == RIGHT_INNER);
+        if (straight_yaw_polarity != 0 && i % 10U == 0U) {
+            /* Left correction produces positive physical heading here. */
+            LineFollow_SetYaw(wrap_yaw((float)straight_yaw_polarity * heading * 57.2957795f),
+                               i, i, true);
+        }
         float left, right;
         if (baseline) {
             float correction = black == LEFT_INNER ? -100.0f : (black == RIGHT_INNER ? 100.0f : 0.0f);
@@ -655,6 +784,41 @@ static void test_straight_models(void)
         StraightMetrics balanced = straight_model(false, 0.08f, 1.0f, 0.06f * (float)side);
         assert(balanced.lateral_rms < 0.003f && balanced.heading_rms < 0.003f);
     }
+    for (int polarity = -1; polarity <= 1; polarity += 2) {
+        learn_yaw_polarity(polarity);
+        LineFollow_Start();
+        LineFollow_SetYaw(0.0f, 0U, 0U, true);
+        (void)step(CENTER);
+        LineFollow_SetYaw((float)polarity * 0.1f, 10U, 10U, true);
+        LineFollowResult_t r = step(CENTER);
+        assert(r.left_command > r.right_command); /* oppose positive physical yaw rate */
+        LineFollow_SetYaw((float)polarity * 0.1f, 10U, 111U, true);
+        r = step(CENTER);
+        assert(r.left_command == r.right_command); /* stale gyro must not steer */
+        LineFollow_Init();
+        LineFollow_Start();
+        LineFollow_SetYaw(0.0f, 0U, 0U, true);
+        LineFollow_SetYaw(0.1f, 10U, 10U, true);
+        r = step(CENTER);
+        assert(r.left_command == r.right_command); /* no guessed boot-time polarity */
+        for (unsigned lag_ms = 40U; lag_ms <= 120U; lag_ms += 40U) {
+            for (int side = -1; side <= 1; side += 2) {
+                float gain = 1.0f + (float)side * 0.03f;
+                straight_yaw_polarity = 0;
+                StraightMetrics no_yaw = straight_model(false, (float)lag_ms / 1000.0f, gain, -(float)side * 0.06f);
+                straight_yaw_polarity = polarity;
+                StraightMetrics yaw = straight_model(false, (float)lag_ms / 1000.0f, gain, -(float)side * 0.06f);
+                printf("Straight yaw model: polarity %d lag %u gain %.2f heading %.3f -> %.3f mrad, command variation %.2f -> %.2f\n",
+                       polarity, lag_ms, gain, no_yaw.heading_rms * 1000.0f, yaw.heading_rms * 1000.0f,
+                       no_yaw.command_variation, yaw.command_variation);
+                assert(yaw.heading_rms < no_yaw.heading_rms);
+                assert(yaw.command_variation <= 1.05f * no_yaw.command_variation);
+                assert(yaw.lateral_rms < 0.003f);
+            }
+        }
+    }
+    straight_yaw_polarity = 0;
+    LineFollow_Init();
 }
 
 int main(void)
@@ -684,16 +848,14 @@ int main(void)
     expect(LEFT_OUTER | RIGHT_OUTER, inner_slow, inner_slow);
 
     /* Four indications off: first move slowly, then search with a differential. */
-    expect(0U, CONTROL_MIN_FORWARD_COMMAND_DEFAULT,
-           CONTROL_MIN_FORWARD_COMMAND_DEFAULT);
+    expect(0U, LINE_FOLLOW_CURVE_SPEED_DEFAULT, LINE_FOLLOW_CURVE_SPEED_DEFAULT);
     LineFollowResult_t lost = step(0U);
-    for (unsigned i = 0U; i < LINE_FOLLOW_ALL_OFF_SLOW_CYCLES; ++i) {
+    for (unsigned i = 0U; i < LINE_FOLLOW_WHITE_GRACE_CYCLES; ++i) {
         lost = step(0U);
     }
     assert(lost.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(lost.left_command > 0.0f && lost.right_command > 0.0f);
-    assert(fabsf(lost.left_command - lost.right_command) ==
-           outer_fast - outer_slow);
+    assert(lost.left_command == 0.0f || lost.right_command == 0.0f);
+    assert(fabsf(lost.left_command - lost.right_command) == LINE_FOLLOW_RECOVERY_OUTER_COMMAND);
     test_inner_steering();
     test_straight_models();
     test_corner_sequences();
@@ -704,6 +866,7 @@ int main(void)
     test_dynamic_corner_models(0);
     test_dynamic_corner_models(1);
     test_dynamic_corner_models(-1);
+    test_displaced_corner_exit();
     for (int side = -1; side <= 1; side += 2) {
         test_corner_model((float)side, 1.00f, 0.00f);
         test_corner_model((float)side, 0.97f, 0.03f);
@@ -722,6 +885,8 @@ int main(void)
         test_arc_model((float)side, 1.03f, -0.03f, 0.168f, 0.10f);
     }
     LineFollow_SetYaw(0.0f, 0U, 0U, false);
+    test_power_on_and_pause();
+    test_glitches_and_recovery_budget();
     test_vehicle_turn_gating();
     puts("PASS: gentle inner steering, straight stability, corner latch, recovery, watchdogs and vehicle gating");
     return 0;

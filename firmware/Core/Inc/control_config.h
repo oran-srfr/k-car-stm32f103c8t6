@@ -49,18 +49,18 @@
  * Center, direction reversal, outer probes and recovery clear the ramp. */
 #define LINE_FOLLOW_INNER_INITIAL_CORRECTION         (25.0f)
 #define LINE_FOLLOW_INNER_CORRECTION_STEP             (1.0f)
+/* Rate damping only at the centered probe pair; polarity is learned during
+ * a turn. No fixed heading is imposed on line acquisition or normal arcs. */
+#define LINE_FOLLOW_STRAIGHT_RATE_GAIN               (2.0f)
+#define LINE_FOLLOW_STRAIGHT_RATE_LIMIT              (25.0f)
 #define LINE_FOLLOW_OUTER_FAST_COMMAND_DEFAULT       (940.0f)
 #define LINE_FOLLOW_OUTER_SLOW_COMMAND_DEFAULT       (320.0f)
-/* 四灯全灭时先「直行」多少个控制周期再开始差速搜索。
- * 80 周期 ≈ 80 ms —— 丢线后还要直冲 80 ms 才肯找线，弯道上这就是「反应慢」。
- * 收到 25 周期（≈25 ms），一丢线几乎立刻开始朝最后方向找。 */
-#define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (25U)
 /* Sharp turns: stop the inside wheel while seeking the line.
- * Confirm an outer probe for 3 ms; a three-probe corner pattern or an
+ * Confirm an outer probe for 6 ms; a three-probe corner pattern or an
  * outer-probe -> lost transition starts the turn immediately. */
 #define LINE_FOLLOW_TURN_OUTER_COMMAND                (800.0f)
 #define LINE_FOLLOW_TURN_INNER_COMMAND                (0.0f)
-#define LINE_FOLLOW_TURN_TRIGGER_CYCLES               (3U)
+#define LINE_FOLLOW_TURN_TRIGGER_CYCLES               (6U)
 #define LINE_FOLLOW_TURN_MIN_CYCLES                   (60U)
 #define LINE_FOLLOW_TURN_MAX_CYCLES                   (4500U)
 #define LINE_FOLLOW_TURN_MAX_LOST_CYCLES              (3000U)
@@ -83,9 +83,11 @@
 #define LINE_FOLLOW_YAW_GAIN                         (15.0f)
 #define LINE_FOLLOW_YAW_BRAKE_LIMIT                  (200.0f)
 #define LINE_FOLLOW_YAW_EXIT_MARGIN_DEG              (12.0f)
-#define LINE_FOLLOW_YAW_CENTER_MARGIN_DEG            (8.0f)
 #define LINE_FOLLOW_TURN_SETTLE_CYCLES                   (500U)
-#define FIRMWARE_REVISION_TEXT                       "R4"
+#define LINE_FOLLOW_WHITE_GRACE_CYCLES                (12U)
+#define LINE_FOLLOW_RECOVERY_OUTER_COMMAND           (700.0f)
+#define LINE_FOLLOW_BLACK_CONFIRM_CYCLES              (12U)
+#define FIRMWARE_REVISION_TEXT                       "R5"
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)
 #endif

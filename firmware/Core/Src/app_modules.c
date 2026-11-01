@@ -154,6 +154,7 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
 
 void Modules_RunStarted(AppMode mode, uint32_t now_ms)
 {
+    VehicleControl_Start();
     if (mode == APP_MODE_LAPS) {
         Attitude_StartLap(now_ms);
     } else {

@@ -51,6 +51,7 @@ volatile uint8_t g_tracking_bits = 0U;
 volatile float g_tracking_deviation = 0.0f;
 volatile LineFollowFault_t g_tracking_fault = LINE_FOLLOW_FAULT_NONE;
 volatile LineFollowTurnPhase_t g_tracking_turn_phase = LINE_FOLLOW_TURN_NONE;
+volatile bool g_tracking_yaw_assist = false;
 
 static void HMI_Poll(AppInputs *inputs)
 {
@@ -80,6 +81,10 @@ static void Mpu_Poll(uint32_t now_ms)
 static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
 {
     VehicleControlOutput_t vehicle;
+    AttitudeStatus attitude;
+    Attitude_GetStatus(&attitude);
+    LineFollow_SetYaw(attitude.yaw_deg, attitude.yaw_ms, now_ms,
+                       attitude.ready && attitude.live && attitude.link.frames_ok > 0U);
 
     if ((uint32_t)(now_ms - s_last_control_ms) >= CONTROL_PERIOD_MS) {
         s_last_control_ms = now_ms;
@@ -103,6 +108,7 @@ static void Tracking_Poll(uint32_t now_ms, AppInputs *inputs)
     g_tracking_deviation = vehicle.line_follow.control.track.deviation;
     g_tracking_fault = vehicle.line_follow.fault;
     g_tracking_turn_phase = vehicle.line_follow.turn_phase;
+    g_tracking_yaw_assist = vehicle.line_follow.turn_yaw_assist;
 }
 
 static void Parking_Poll(AppInputs *inputs)
@@ -273,8 +279,8 @@ static void Debug_Display(const AppStatus *status)
     DebugLine_AppendU16(line, (uint16_t)status->state, 1U);
     DebugLine_Append(line, "E");
     DebugLine_AppendU16(line, (uint16_t)status->error, 1U);
-    DebugLine_Append(line, "L");
-    DebugLine_AppendU16(line, (uint16_t)g_tracking_status, 1U);
+    DebugLine_Append(line, "A");
+    DebugLine_AppendU16(line, g_tracking_yaw_assist ? 1U : 0U, 1U);
     DebugLine_Append(line, "O");
     DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
     DebugLine_Append(line, "T");

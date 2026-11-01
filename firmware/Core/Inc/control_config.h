@@ -66,11 +66,26 @@
 #define LINE_FOLLOW_TURN_MAX_LOST_CYCLES              (3000U)
 #define LINE_FOLLOW_TURN_ALL_BLACK_CYCLES             (500U)
 #define LINE_FOLLOW_TURN_ALIGN_COMMAND               (560.0f)
-#define LINE_FOLLOW_TURN_ALIGN_CORRECTION            (100.0f)
+#define LINE_FOLLOW_TURN_ALIGN_CORRECTION            (80.0f)
+#define LINE_FOLLOW_TURN_ALIGN_KD                    (0.80f)
+#define LINE_FOLLOW_TURN_ALIGN_LIMIT                 (140.0f)
+#define LINE_FOLLOW_TURN_ALIGN_GAP_CORRECTION         (80.0f)
+#define LINE_FOLLOW_TURN_ALIGN_SOFT_GAP_CYCLES         (40U)
 #define LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES             (200U)
 #define LINE_FOLLOW_TURN_REACQUIRE_CYCLES             (30U)
 #define LINE_FOLLOW_TURN_EXIT_STEP                   (1.0f)
-#define FIRMWARE_REVISION_TEXT                       "R3"
+/* Yaw is relative to turn entry; module polarity is handled automatically. */
+#define LINE_FOLLOW_YAW_MAX_AGE_MS                    (100U)
+#define LINE_FOLLOW_YAW_MAX_STEP_DEG                 (45.0f)
+#define LINE_FOLLOW_YAW_TARGET_DEG                   (90.0f)
+#define LINE_FOLLOW_YAW_SLOW_DEG                     (80.0f)
+#define LINE_FOLLOW_YAW_COAST_SECONDS                (0.08f)
+#define LINE_FOLLOW_YAW_GAIN                         (15.0f)
+#define LINE_FOLLOW_YAW_BRAKE_LIMIT                  (200.0f)
+#define LINE_FOLLOW_YAW_EXIT_MARGIN_DEG              (12.0f)
+#define LINE_FOLLOW_YAW_CENTER_MARGIN_DEG            (8.0f)
+#define LINE_FOLLOW_TURN_SETTLE_CYCLES                   (500U)
+#define FIRMWARE_REVISION_TEXT                       "R4"
 #ifndef LINE_FOLLOW_DISCRETE_MODE
 #define LINE_FOLLOW_DISCRETE_MODE                    (1U)
 #endif

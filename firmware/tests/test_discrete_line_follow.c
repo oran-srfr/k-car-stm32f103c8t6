@@ -224,12 +224,15 @@ static void test_turn_alignment(void)
     assert(r.turn_phase == LINE_FOLLOW_TURN_ALIGN);
     assert(r.left_command > r.right_command); /* follow the current right-side line */
     r = step(0U);
-    assert(r.left_command == LINE_FOLLOW_TURN_OUTER_COMMAND);
-    assert(r.right_command == LINE_FOLLOW_TURN_INNER_COMMAND); /* search right, not the entry left */
+    assert(r.left_command > r.right_command); /* soft search right, not the entry left */
+    assert(fabsf(r.left_command - r.right_command) <= 2.0f * LINE_FOLLOW_TURN_ALIGN_GAP_CORRECTION);
     r = step(LEFT_INNER);
     assert(r.left_command < r.right_command);
     r = step(0U);
+    assert(r.left_command < r.right_command);
+    for (unsigned i = 0; i < LINE_FOLLOW_TURN_ALIGN_SOFT_GAP_CYCLES; ++i) r = step(0U);
     assert(r.left_command == LINE_FOLLOW_TURN_INNER_COMMAND);
+    assert(r.right_command == LINE_FOLLOW_TURN_OUTER_COMMAND);
 
     /* A slow vehicle still turning at 1.2 s must not trip the old watchdog. */
     LineFollow_Start();
@@ -241,6 +244,85 @@ static void test_turn_alignment(void)
     LineFollow_Stop();
     r = step(CENTER);
     assert(r.turn_phase == LINE_FOLLOW_TURN_NONE && r.turn_cycles == 0U);
+}
+
+static void test_exit_edge_is_not_another_corner(void)
+{
+    LineFollow_SetYaw(0.0f, 0U, 0U, false);
+    LineFollow_Start();
+    (void)step(LEFT_OUTER | CENTER);
+    (void)step(0U);
+    LineFollowResult_t r = step(CENTER);
+    for (unsigned i = 0U; i < 400U && r.state == LINE_FOLLOW_TURNING; ++i) r = step(CENTER);
+    assert(r.state == LINE_FOLLOW_TRACKING);
+    for (unsigned i = 0U; i < 20U; ++i) {
+        r = step(LEFT_OUTER);
+        assert(r.state == LINE_FOLLOW_TRACKING);
+        assert(fabsf(r.left_command - r.right_command) <= 2.0f * LINE_FOLLOW_TURN_ALIGN_LIMIT);
+        assert(r.left_command >= motor.min_forward_command && r.right_command >= motor.min_forward_command);
+    }
+    r = step(0U);
+    assert(r.state != LINE_FOLLOW_TURNING && r.fault == LINE_FOLLOW_FAULT_NONE);
+    assert(r.left_command > 0.0f && r.right_command > 0.0f);
+    r = step(RIGHT_OUTER | CENTER); /* a distinct wide corner may still start immediately */
+    assert(r.state == LINE_FOLLOW_TURNING);
+    LineFollow_Stop();
+}
+
+static float wrap_yaw(float yaw)
+{
+    while (yaw > 180.0f) yaw -= 360.0f;
+    while (yaw < -180.0f) yaw += 360.0f;
+    return yaw;
+}
+
+static void test_yaw_braking(void)
+{
+    LineFollow_SetYaw(179.0f, 1000U, 1000U, true);
+    LineFollow_Start();
+    LineFollowResult_t r = step(LEFT_OUTER | CENTER);
+    assert(r.turn_yaw_assist && fabsf(r.turn_angle_deg) < 0.01f);
+    /* A positive-yaw installation is valid even for a logical left turn. */
+    for (unsigned angle = 1U; angle <= 90U; ++angle) {
+        LineFollow_SetYaw(wrap_yaw(179.0f + (float)angle), 1000U + angle * 10U,
+                           1000U + angle * 10U, true);
+        r = step(angle < 80U ? LEFT_OUTER : LEFT_INNER);
+        assert(r.turn_yaw_assist);
+    }
+    assert(fabsf(r.turn_angle_deg - 90.0f) < 0.01f);
+    assert(r.left_command > r.right_command); /* brake a left turn before coasting farther */
+    assert(r.left_command <= 1000.0f && r.right_command >= 0.0f);
+
+    LineFollow_SetYaw(-91.0f, 1900U, 2001U, true); /* stale despite caller saying valid */
+    assert(!step(CENTER).turn_yaw_assist);
+    LineFollow_SetYaw(-91.0f, 2002U, 2002U, true);
+    assert(!step(CENTER).turn_yaw_assist); /* do not latch a new origin mid-turn */
+    LineFollow_Stop();
+    assert(!step(CENTER).turn_yaw_assist);
+
+    LineFollow_SetYaw(0.0f, 3000U, 3000U, true);
+    LineFollow_Start();
+    (void)step(RIGHT_OUTER | CENTER);
+    LineFollow_SetYaw(90.0f, 3010U, 3010U, true); /* impossible one-frame step */
+    assert(!step(CENTER).turn_yaw_assist);
+    LineFollow_SetYaw(NAN, 3020U, 3020U, true);
+    assert(!step(CENTER).turn_yaw_assist);
+
+    LineFollow_SetYaw(179.0f, UINT32_MAX - 5U, UINT32_MAX - 5U, true);
+    LineFollow_Start();
+    (void)step(RIGHT_OUTER | CENTER);
+    LineFollow_SetYaw(-179.0f, 4U, 4U, true); /* yaw and millisecond wrap */
+    r = step(RIGHT_OUTER);
+    assert(r.turn_yaw_assist && fabsf(r.turn_angle_deg - 2.0f) < 0.01f);
+    LineFollow_SetYaw(INFINITY, 14U, 14U, true);
+    assert(!step(CENTER).turn_yaw_assist);
+
+    LineFollow_SetYaw(0.0f, 4000U, 4000U, true);
+    LineFollow_Start();
+    for (unsigned i = 0U; i < 10U; ++i) r = step(LEFT_OUTER);
+    assert(r.state == LINE_FOLLOW_TURNING && !r.turn_yaw_assist); /* an edge alone is not a 90-degree corner */
+    LineFollow_SetYaw(0.0f, 0U, 0U, false);
+    LineFollow_Stop();
 }
 
 static void test_corner_watchdogs(void)
@@ -358,6 +440,7 @@ static void test_corner_model(float mirror, float left_gain, float heading)
  * signed wheel response. Speeds, sensor spacing and stripe width remain
  * model assumptions. A turn must finish without a full rotation. */
 static unsigned max_turn, max_lost;
+static float model_max_overshoot, model_max_body_offset;
 static float model_dead_zone;
 
 static float probe_speed_command(float command, float scale)
@@ -367,10 +450,11 @@ static float probe_speed_command(float command, float scale)
 }
 
 static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
-                                  float left_gain, float mirror)
+                                  float left_gain, float mirror, int yaw_polarity)
 {
     float x = 0.1f, y = 0.0f, heading = 0.0f, vl = 0.0f, vr = 0.0f;
     unsigned turn_samples = 0U;
+    LineFollow_SetYaw(179.0f, 0U, 0U, yaw_polarity != 0);
     LineFollow_Start();
     for (unsigned cycle = 0U; cycle < 100000U; ++cycle) {
         uint8_t black = 0U;
@@ -379,6 +463,10 @@ static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
             float sx = x + sensor_offset * cosf(heading) - lateral * sinf(heading);
             float sy = y + sensor_offset * sinf(heading) + lateral * cosf(heading);
             if (corner_distance(sx, mirror * sy) <= 0.0075f) black |= 1U << bit;
+        }
+        if (yaw_polarity != 0 && cycle % 10U == 0U) {
+            LineFollow_SetYaw(wrap_yaw(179.0f + (float)yaw_polarity * heading * 57.2957795f),
+                               cycle, cycle, true);
         }
         LineFollowResult_t r = step(black);
         if (r.turn_cycles > max_turn) max_turn = r.turn_cycles;
@@ -395,6 +483,8 @@ static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
         heading += (vr - vl) / 0.168f * CONTROL_PERIOD_SECONDS;
         x += 0.5f * (vl + vr) * cosf(heading) * CONTROL_PERIOD_SECONDS;
         y += 0.5f * (vl + vr) * sinf(heading) * CONTROL_PERIOD_SECONDS;
+        if (mirror * y > 0.03f) model_max_overshoot = fmaxf(model_max_overshoot, mirror * heading - 1.570796327f);
+        if (mirror * y > 0.10f) model_max_body_offset = fmaxf(model_max_body_offset, fabsf(x - 0.5f));
         if (mirror * y > 0.3f) {
             bool complete = fabsf(x - 0.5f) < 0.035f &&
                             mirror * sinf(heading) > 0.95f && turn_samples > 0U;
@@ -408,13 +498,14 @@ static bool dynamic_corner_model(float sensor_offset, float scale, float lag,
     return false;
 }
 
-static void test_dynamic_corner_models(void)
+static void test_dynamic_corner_models(int yaw_polarity)
 {
     const float offsets[] = {0.08f, 0.10f, 0.12f};
     const float scales[] = {0.12f, 0.24f, 0.60f};
     const float dead_zones[] = {0.0f, 250.0f, 350.0f, 450.0f, 500.0f, 550.0f};
     unsigned total = 0U;
     max_turn = max_lost = 0U;
+    model_max_overshoot = model_max_body_offset = 0.0f;
     for (unsigned a = 0U; a < 3U; ++a) {
         for (unsigned v = 0U; v < 3U; ++v) {
             for (unsigned dz = 0U; dz < 6U; ++dz) {
@@ -423,7 +514,7 @@ static void test_dynamic_corner_models(void)
                     for (unsigned gain = 0U; gain < 2U; ++gain) {
                         for (int side = -1; side <= 1; side += 2) {
                             assert(dynamic_corner_model(offsets[a], scales[v], lag ? 0.08f : 0.04f,
-                                                        gain ? 1.03f : 0.97f, (float)side));
+                                                        gain ? 1.03f : 0.97f, (float)side, yaw_polarity));
                             ++total;
                         }
                     }
@@ -431,8 +522,11 @@ static void test_dynamic_corner_models(void)
             }
         }
     }
-    printf("Dynamic corner models: %u passed; max turn %u ticks, max lost %u ticks\n",
-           total, max_turn, max_lost);
+    printf("Dynamic corner models: yaw polarity %d, %u passed; max turn %u ticks, overshoot %.2f deg, body offset %.1f mm\n",
+           yaw_polarity, total, max_turn, model_max_overshoot * 57.2957795f, model_max_body_offset * 1000.0f);
+    assert(model_max_body_offset < 0.04f);
+    if (yaw_polarity != 0) assert(model_max_overshoot < 0.21f);
+    LineFollow_SetYaw(0.0f, 0U, 0U, false);
 }
 
 static float arc_distance(float x, float y)
@@ -443,11 +537,14 @@ static float arc_distance(float x, float y)
     return d;
 }
 
+static bool arc_yaw_enabled;
+
 static void test_arc_model(float mirror, float left_gain, float heading,
                            float wheel_track, float sensor_offset)
 {
     float x = 0.1f, y = 0.0f, max_error = 0.0f;
     unsigned cycles;
+    LineFollow_SetYaw(wrap_yaw(heading * 57.2957795f), 0U, 0U, arc_yaw_enabled);
     LineFollow_Start();
     for (cycles = 0U; cycles < 60000U; ++cycles) {
         uint8_t black = 0U;
@@ -457,7 +554,11 @@ static void test_arc_model(float mirror, float left_gain, float heading,
             float sy = y + sensor_offset * sinf(heading) + lateral * cosf(heading);
             if (arc_distance(sx, mirror * sy) <= 0.0075f) black |= (1U << bit);
         }
+        if (arc_yaw_enabled && cycles % 10U == 0U) {
+            LineFollow_SetYaw(wrap_yaw(heading * 57.2957795f), cycles, cycles, true);
+        }
         LineFollowResult_t r = step(black);
+        if (arc_yaw_enabled) assert(!r.turn_yaw_assist);
         assert(r.fault == LINE_FOLLOW_FAULT_NONE);
         float vl = 0.6f * r.left_command / 1000.0f * left_gain;
         float vr = 0.6f * r.right_command / 1000.0f;
@@ -467,8 +568,8 @@ static void test_arc_model(float mirror, float left_gain, float heading,
         max_error = fmaxf(max_error, arc_distance(x, mirror * y));
         if (mirror * y < -1.15f && x < 0.55f) break;
     }
-    printf("Discrete R60 model: wheel track %.1f cm, probes %.1f cm, side %+.0f gain %.2f, %u cycles, max axle error %.1f mm\n",
-           wheel_track * 100.0f, sensor_offset * 100.0f, mirror, left_gain, cycles, 1000.0f * max_error);
+    printf("Discrete R60 model: yaw %u, wheel track %.1f cm, probes %.1f cm, side %+.0f gain %.2f, %u cycles, max axle error %.1f mm\n",
+           arc_yaw_enabled ? 1U : 0U, wheel_track * 100.0f, sensor_offset * 100.0f, mirror, left_gain, cycles, 1000.0f * max_error);
     assert(cycles < 60000U && max_error < 0.04f && cosf(heading) < -0.95f);
 }
 
@@ -598,7 +699,11 @@ int main(void)
     test_corner_sequences();
     test_corner_watchdogs();
     test_turn_alignment();
-    test_dynamic_corner_models();
+    test_exit_edge_is_not_another_corner();
+    test_yaw_braking();
+    test_dynamic_corner_models(0);
+    test_dynamic_corner_models(1);
+    test_dynamic_corner_models(-1);
     for (int side = -1; side <= 1; side += 2) {
         test_corner_model((float)side, 1.00f, 0.00f);
         test_corner_model((float)side, 0.97f, 0.03f);
@@ -610,6 +715,13 @@ int main(void)
         test_arc_model((float)side, 1.03f, -0.03f, 0.14f, 0.08f);
         test_arc_model((float)side, 1.03f, -0.03f, 0.168f, 0.10f);
     }
+    arc_yaw_enabled = true;
+    for (int side = -1; side <= 1; side += 2) {
+        test_arc_model((float)side, 1.00f, 0.00f, 0.168f, 0.10f);
+        test_arc_model((float)side, 0.97f, 0.03f, 0.168f, 0.10f);
+        test_arc_model((float)side, 1.03f, -0.03f, 0.168f, 0.10f);
+    }
+    LineFollow_SetYaw(0.0f, 0U, 0U, false);
     test_vehicle_turn_gating();
     puts("PASS: gentle inner steering, straight stability, corner latch, recovery, watchdogs and vehicle gating");
     return 0;

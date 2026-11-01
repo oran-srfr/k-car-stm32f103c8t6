@@ -28,6 +28,17 @@ static LineFollowTurnPhase_t s_turn_phase = LINE_FOLLOW_TURN_NONE;
 static float s_resume_base = 0.0f;
 static bool s_turn_departed = false;
 static int8_t s_align_search_direction = 0;
+static uint16_t s_align_lost_cycles = 0U;
+static bool s_yaw_valid = false;
+static float s_yaw_deg = 0.0f;
+static float s_yaw_rate = 0.0f;
+static uint32_t s_yaw_ms = 0U;
+static bool s_turn_yaw_valid = false;
+static bool s_turn_corner = false;
+static float s_turn_yaw_start = 0.0f;
+static uint16_t s_exit_hold_cycles = 0U;
+static int8_t s_yaw_turn_direction = 0;
+static void LineFollow_ApplyYawBrake(float base, LineFollowResult_t *result);
 #endif
 #if !LINE_FOLLOW_DISCRETE_MODE
 static int8_t s_error_direction = 0;
@@ -65,6 +76,12 @@ static void LineFollow_ResetState(LineFollowState_t state)
   s_resume_base = 0.0f;
   s_turn_departed = false;
   s_align_search_direction = 0;
+  s_align_lost_cycles = 0U;
+  s_turn_yaw_valid = false;
+  s_turn_corner = false;
+  s_turn_yaw_start = 0.0f;
+  s_exit_hold_cycles = 0U;
+  s_yaw_turn_direction = 0;
 #endif
 #if !LINE_FOLLOW_DISCRETE_MODE
   s_error_direction = 0;
@@ -271,9 +288,50 @@ static void LineFollow_HandleInner(int8_t direction,
                                  &config);
   result->left_command = motor.left_command;
   result->right_command = motor.right_command;
+  if (s_exit_hold_cycles > 0U) {
+    --s_exit_hold_cycles;
+    LineFollow_ApplyYawBrake(0.5f * (motor.left_command + motor.right_command), result);
+    motor = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
+                                   0.5f * (result->left_command - result->right_command) -
+                                   config.straight_trim, &config);
+    result->left_command = motor.left_command;
+    result->right_command = motor.right_command;
+  }
 }
 
-static void LineFollow_BeginTurn(int8_t direction)
+static float LineFollow_WrapAngle(float angle)
+{
+  if (angle > 180.0f) angle -= 360.0f;
+  if (angle < -180.0f) angle += 360.0f;
+  return angle;
+}
+
+static float LineFollow_TurnAngle(void)
+{
+  return fabsf(LineFollow_WrapAngle(s_yaw_deg - s_turn_yaw_start));
+}
+
+static void LineFollow_ApplyYawBrake(float base, LineFollowResult_t *result)
+{
+  if (!s_turn_yaw_valid) return;
+  if (LineFollow_TurnAngle() >= LINE_FOLLOW_YAW_SLOW_DEG) s_turn_corner = true;
+  if (!s_turn_corner) return;
+  float relative = LineFollow_WrapAngle(s_yaw_deg - s_turn_yaw_start);
+  float rate = (relative < 0.0f) ? -s_yaw_rate : s_yaw_rate;
+  float predicted = fabsf(relative) + fmaxf(rate, 0.0f) * LINE_FOLLOW_YAW_COAST_SECONDS;
+  if (fabsf(relative) < LINE_FOLLOW_YAW_SLOW_DEG) return;
+  float limit = (LINE_FOLLOW_YAW_TARGET_DEG - predicted) * LINE_FOLLOW_YAW_GAIN;
+  limit = fmaxf(-LINE_FOLLOW_YAW_BRAKE_LIMIT,
+                 fminf(limit, LINE_FOLLOW_TURN_ALIGN_LIMIT));
+  float correction = 0.5f * (result->left_command - result->right_command);
+  if (correction * (float)s_yaw_turn_direction > limit) {
+    correction = limit * (float)s_yaw_turn_direction;
+    result->left_command = base + correction;
+    result->right_command = base - correction;
+  }
+}
+
+static void LineFollow_BeginTurn(int8_t direction, bool corner)
 {
   LineFollow_ResetInnerSteering();
   s_state = LINE_FOLLOW_TURNING;
@@ -287,6 +345,12 @@ static void LineFollow_BeginTurn(int8_t direction)
   s_resume_base = 0.0f;
   s_turn_departed = false;
   s_align_search_direction = direction;
+  s_align_lost_cycles = 0U;
+  s_turn_corner = corner;
+  s_turn_yaw_valid = s_yaw_valid;
+  s_turn_yaw_start = s_yaw_deg;
+  s_yaw_turn_direction = direction;
+  s_exit_hold_cycles = 0U;
 }
 
 /* Keep the entry direction while seeking; once the line appears, align
@@ -310,6 +374,7 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
       (SENSOR_LEFT_INNER_MASK | SENSOR_RIGHT_INNER_MASK)) {
     s_turn_departed = true;
   }
+  if (bits == 0x07U || bits == 0x0EU) s_turn_corner = true;
   if (result->control.track.status == LINE_TRACK_STATUS_ALL_BLACK) {
     if (++s_turn_all_black_cycles > LINE_FOLLOW_TURN_ALL_BLACK_CYCLES) {
       LineFollow_SetFault(LINE_FOLLOW_FAULT_ALL_BLACK, result);
@@ -319,20 +384,44 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
     s_turn_all_black_cycles = 0U;
   }
   if (result->control.track.status == LINE_TRACK_STATUS_LOST) {
+    s_turn_corner = true;
     if (++s_lost_cycles > LINE_FOLLOW_TURN_MAX_LOST_CYCLES) {
       LineFollow_SetFault(LINE_FOLLOW_FAULT_LOST_TIMEOUT, result);
       return;
     }
   }
 
-  if (inner_only && s_turn_cycles >= LINE_FOLLOW_TURN_MIN_CYCLES) {
+  if (s_turn_yaw_valid && s_turn_phase == LINE_FOLLOW_TURN_ALIGN &&
+      LineFollow_TurnAngle() >= LINE_FOLLOW_YAW_SLOW_DEG) {
+    /* A sharp corner can stay continuously visible and never show 3 probes
+     * or white. A single alignment maneuver reaching this angle is also
+     * corner evidence; a normal arc finishes its small correction earlier. */
+    s_turn_corner = true;
+  }
+  bool yaw_assist = s_turn_yaw_valid && s_turn_corner;
+  bool yaw_line_capture = yaw_assist &&
+                          result->control.track.status == LINE_TRACK_STATUS_NORMAL &&
+                          LineFollow_TurnAngle() >= LINE_FOLLOW_YAW_SLOW_DEG;
+  if ((inner_only || yaw_line_capture) && s_turn_cycles >= LINE_FOLLOW_TURN_MIN_CYCLES) {
     s_turn_phase = LINE_FOLLOW_TURN_ALIGN;
   }
   if (s_turn_phase == LINE_FOLLOW_TURN_ALIGN) {
     ++s_turn_align_cycles;
+    if (result->control.track.status == LINE_TRACK_STATUS_LOST) {
+      ++s_align_lost_cycles;
+    } else {
+      s_align_lost_cycles = 0U;
+    }
   }
 
-  if (inner_only && s_turn_departed &&
+  bool heading_ready = !yaw_assist || LineFollow_TurnAngle() <=
+                       LINE_FOLLOW_YAW_TARGET_DEG + LINE_FOLLOW_YAW_EXIT_MARGIN_DEG;
+  bool line_aligned = inner_only ||
+                      (yaw_assist && result->control.track.status == LINE_TRACK_STATUS_NORMAL &&
+                       (bits & (SENSOR_LEFT_INNER_MASK | SENSOR_RIGHT_INNER_MASK)) != 0U &&
+                       fabsf(LineFollow_TurnAngle() - LINE_FOLLOW_YAW_TARGET_DEG) <=
+                       LINE_FOLLOW_YAW_CENTER_MARGIN_DEG);
+  if (line_aligned && heading_ready && s_turn_departed &&
       s_turn_align_cycles >= LINE_FOLLOW_TURN_ALIGN_MIN_CYCLES) {
     if (s_reacquire_cycles < UINT16_MAX) {
       ++s_reacquire_cycles;
@@ -347,6 +436,7 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
       LineFollow_UpdateLastDeviation(result->control.track.deviation);
       s_turn_phase = LINE_FOLLOW_TURN_NONE;
       s_resume_base = align_base;
+      s_exit_hold_cycles = LINE_FOLLOW_TURN_SETTLE_CYCLES;
       result->left_command = s_resume_base;
       result->right_command = s_resume_base;
       result->base_speed = s_resume_base;
@@ -362,10 +452,22 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
      * Continuing the entry pivot here sweeps across it; immediately restoring
      * straight speed instead can throw the car off before it is aligned. */
     float correction = LINE_FOLLOW_TURN_ALIGN_CORRECTION *
-                       result->control.track.deviation;
+                       result->control.track.deviation +
+                       LINE_FOLLOW_TURN_ALIGN_KD * result->control.pd.derivative;
+    correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
+                       fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
     if (result->control.track.deviation != 0.0f) {
       s_align_search_direction = (result->control.track.deviation < 0.0f) ? -1 : 1;
     }
+    result->left_command = align_base + correction;
+    result->right_command = align_base - correction;
+  } else if (s_turn_phase == LINE_FOLLOW_TURN_ALIGN &&
+             (result->control.track.status == LINE_TRACK_STATUS_ALL_BLACK ||
+              s_align_lost_cycles <= LINE_FOLLOW_TURN_ALIGN_SOFT_GAP_CYCLES)) {
+    /* A short gap after capture must not restore a full pivot pulse. */
+    float correction = (result->control.track.status == LINE_TRACK_STATUS_LOST) ?
+                        (float)s_align_search_direction *
+                        LINE_FOLLOW_TURN_ALIGN_GAP_CORRECTION : 0.0f;
     result->left_command = align_base + correction;
     result->right_command = align_base - correction;
   } else {
@@ -377,6 +479,10 @@ static void LineFollow_HandleTurn(const LineFollowConfig_t *follow_config,
     result->right_command = (search_direction < 0) ?
                           LINE_FOLLOW_TURN_OUTER_COMMAND :
                           LINE_FOLLOW_TURN_INNER_COMMAND;
+  }
+  if (yaw_assist && (s_turn_phase == LINE_FOLLOW_TURN_ALIGN ||
+                    result->control.track.status == LINE_TRACK_STATUS_NORMAL)) {
+    LineFollow_ApplyYawBrake(align_base, result);
   }
   result->base_speed = 0.5f * (result->left_command + result->right_command);
 }
@@ -418,9 +524,24 @@ static void LineFollow_HandleLost(const MotorCommandConfig_t *motor_config,
     LineFollow_ResetInnerSteering();
     /* The outer probe saw the departure side just before the gap. Do not
      * insert a straight-ahead interval or forget that side at a corner. */
-    if (s_outer_direction != 0) {
-      LineFollow_BeginTurn(s_outer_direction);
+    if (s_outer_direction != 0 && s_exit_hold_cycles == 0U) {
+      LineFollow_BeginTurn(s_outer_direction, true);
       LineFollow_HandleTurn(follow_config, result);
+      return;
+    }
+    if (s_exit_hold_cycles > 0U) {
+      --s_exit_hold_cycles;
+      MotorCommandConfig_t config = *motor_config;
+      config.base_speed = fminf(config.base_speed, LINE_FOLLOW_TURN_ALIGN_COMMAND);
+      float correction = (float)s_last_valid_direction * LINE_FOLLOW_TURN_ALIGN_GAP_CORRECTION;
+      result->left_command = config.base_speed + correction;
+      result->right_command = config.base_speed - correction;
+      LineFollow_ApplyYawBrake(config.base_speed, result);
+      MotorCommandResult_t command = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
+          0.5f * (result->left_command - result->right_command), &config);
+      result->left_command = command.left_command;
+      result->right_command = command.right_command;
+      result->base_speed = 0.5f * (command.left_command + command.right_command);
       return;
     }
     int8_t direction = (s_last_valid_direction != 0) ?
@@ -480,8 +601,8 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
       s_outer_cycles = 1U;
     }
     if ((left_inner && right_inner) ||
-        (s_outer_cycles >= LINE_FOLLOW_TURN_TRIGGER_CYCLES)) {
-      LineFollow_BeginTurn(direction);
+        (s_exit_hold_cycles == 0U && s_outer_cycles >= LINE_FOLLOW_TURN_TRIGGER_CYCLES)) {
+      LineFollow_BeginTurn(direction, left_inner && right_inner);
       LineFollow_HandleTurn(follow_config, result);
       return;
     }
@@ -489,6 +610,7 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
     s_outer_direction = 0;
     s_outer_cycles = 0U;
   }
+
   s_state = LINE_FOLLOW_TRACKING;
   s_fault = LINE_FOLLOW_FAULT_NONE;
   s_lost_cycles = 0U;
@@ -497,8 +619,24 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
 
   if (left_outer || right_outer) {
     LineFollow_ResetInnerSteering();
-    /* Brief outer-probe hits still use the ordinary curve differential. */
-    if (left_outer && right_outer) {
+    if (s_exit_hold_cycles > 0U) {
+      /* An outgoing-line edge is not a second corner. Settle on that line
+       * before allowing another edge-only full-pivot trigger. */
+      --s_exit_hold_cycles;
+      MotorCommandConfig_t config = *motor_config;
+      config.base_speed = fminf(config.base_speed, LINE_FOLLOW_TURN_ALIGN_COMMAND);
+      float correction = LINE_FOLLOW_TURN_ALIGN_CORRECTION * result->control.track.deviation +
+                         LINE_FOLLOW_TURN_ALIGN_KD * result->control.pd.derivative;
+      correction = fmaxf(-LINE_FOLLOW_TURN_ALIGN_LIMIT,
+                         fminf(correction, LINE_FOLLOW_TURN_ALIGN_LIMIT));
+      result->left_command = config.base_speed + correction;
+      result->right_command = config.base_speed - correction;
+      LineFollow_ApplyYawBrake(config.base_speed, result);
+      MotorCommandResult_t command = MotorCommand_Calculate(LINE_TRACK_STATUS_NORMAL,
+          0.5f * (result->left_command - result->right_command), &config);
+      result->left_command = command.left_command;
+      result->right_command = command.right_command;
+    } else if (left_outer && right_outer) {
       result->left_command = inner_slow;
       result->right_command = inner_slow;
     } else if (left_outer) {
@@ -602,6 +740,9 @@ static void LineFollow_HandleNormal(const MotorCommandConfig_t *motor_config,
 /** 初始化后保持停止，防止复位后产生非零命令。 */
 void LineFollow_Init(void)
 {
+#if LINE_FOLLOW_DISCRETE_MODE
+  s_yaw_valid = false;
+#endif
   LineFollow_ResetState(LINE_FOLLOW_STOPPED);
 }
 
@@ -615,6 +756,40 @@ void LineFollow_Start(void)
 void LineFollow_Stop(void)
 {
   LineFollow_ResetState(LINE_FOLLOW_STOPPED);
+}
+
+void LineFollow_SetYaw(float yaw_deg, uint32_t sample_ms, uint32_t now_ms, bool valid)
+{
+#if LINE_FOLLOW_DISCRETE_MODE
+  if (!valid || !isfinite(yaw_deg) || fabsf(yaw_deg) > 180.0f ||
+      (uint32_t)(now_ms - sample_ms) > LINE_FOLLOW_YAW_MAX_AGE_MS) {
+    s_yaw_valid = false;
+    s_turn_yaw_valid = false;
+    s_yaw_rate = 0.0f;
+    return;
+  }
+  if (s_yaw_valid && sample_ms != s_yaw_ms) {
+    uint32_t elapsed = sample_ms - s_yaw_ms;
+    float change = LineFollow_WrapAngle(yaw_deg - s_yaw_deg);
+    if (elapsed > LINE_FOLLOW_YAW_MAX_AGE_MS ||
+        fabsf(change) > LINE_FOLLOW_YAW_MAX_STEP_DEG) {
+      s_turn_yaw_valid = false;
+      s_yaw_rate = 0.0f;
+    } else {
+      s_yaw_rate = change * 1000.0f / (float)elapsed;
+    }
+  } else if (!s_yaw_valid) {
+    s_yaw_rate = 0.0f;
+  }
+  s_yaw_deg = yaw_deg;
+  s_yaw_ms = sample_ms;
+  s_yaw_valid = true;
+#else
+  (void)yaw_deg;
+  (void)sample_ms;
+  (void)now_ms;
+  (void)valid;
+#endif
 }
 
 /** 执行一次循迹状态机，不访问 PWM、方向 GPIO 或电机驱动。 */
@@ -676,9 +851,15 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
 #if LINE_FOLLOW_DISCRETE_MODE
   result.turn_phase = s_turn_phase;
   result.turn_cycles = s_turn_cycles;
+  result.turn_yaw_assist = (s_state == LINE_FOLLOW_TURNING ||
+                           (s_state == LINE_FOLLOW_TRACKING && s_exit_hold_cycles > 0U)) &&
+                           s_turn_yaw_valid && s_turn_corner;
+  result.turn_angle_deg = result.turn_yaw_assist ? LineFollow_TurnAngle() : 0.0f;
 #else
   result.turn_phase = LINE_FOLLOW_TURN_NONE;
   result.turn_cycles = 0U;
+  result.turn_yaw_assist = false;
+  result.turn_angle_deg = 0.0f;
 #endif
   s_latest_output = result;
   return result;

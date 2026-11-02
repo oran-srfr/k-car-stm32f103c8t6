@@ -14,7 +14,6 @@ add_executable(k_car
     Core/Src/Attitude.c
     Core/Src/HCI.c
     Core/Src/LapTimer.c
-    Core/Src/legacy_line_walking.c
     Core/Src/line_control.c
     Core/Src/line_follow.c
     Core/Src/line_sensor.c
@@ -29,6 +28,7 @@ add_executable(k_car
     Core/Src/zk.c
     Core/Src/ultrasonic.c
     Core/Src/ultrasonic_stm32.c
+    Core/Src/encoder.c
     Core/Src/newlib_io.c
     Core/Src/stm32f1xx_it.c
     Core/Src/system_stm32f1xx.c

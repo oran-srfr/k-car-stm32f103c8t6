@@ -1,5 +1,4 @@
 #include "line_follow.h"
-#include "legacy_line_walking.h"
 
 #include <assert.h>
 #include <math.h>
@@ -60,15 +59,29 @@ static uint8_t physical_to_raw(uint8_t black)
     return raw;
 }
 
+/* 单拍采样：用于需要精确数控制周期的场景（丢线计时）。 */
 static LineFollowResult_t step(uint8_t black)
 {
     raw_bits = physical_to_raw(black);
     return LineFollow_Update(&pd, &motor, &follow);
 }
 
+/* 连续喂同一个模式，直到逐位去抖确认。
+ * 加了 LINE_FOLLOW_BIT_DEBOUNCE_CYCLES 去抖后，状态切换需要连续若干拍一致才生效，
+ * 所以"检查某个传感器状态下的输出"必须先让状态稳定下来。 */
+static LineFollowResult_t settle(uint8_t black)
+{
+    LineFollowResult_t result = {0};
+
+    for (unsigned i = 0U; i < LINE_FOLLOW_BIT_DEBOUNCE_CYCLES; ++i) {
+        result = step(black);
+    }
+    return result;
+}
+
 static void expect(uint8_t black, float left, float right)
 {
-    LineFollowResult_t result = step(black);
+    LineFollowResult_t result = settle(black);
 
     assert(result.fault == LINE_FOLLOW_FAULT_NONE);
     assert(result.left_command == left);
@@ -84,12 +97,6 @@ int main(void)
     const float straight = CONTROL_BASE_SPEED_DEFAULT;
 
     LineFollow_Start();
-    assert(LegacyLineWalking_Classify(CENTER) == LEGACY_LINE_STRAIGHT);
-    assert(LegacyLineWalking_Classify(LEFT_INNER) == LEGACY_LINE_LEFT_INNER);
-    assert(LegacyLineWalking_Classify(RIGHT_INNER) == LEGACY_LINE_RIGHT_INNER);
-    assert(LegacyLineWalking_Classify(LEFT_OUTER) == LEGACY_LINE_LEFT_OUTER);
-    assert(LegacyLineWalking_Classify(RIGHT_OUTER) == LEGACY_LINE_RIGHT_OUTER);
-    assert(LegacyLineWalking_Classify(0U) == LEGACY_LINE_ALL_OFF);
     expect(CENTER, straight, straight);
     expect(LEFT_INNER, inner_slow, inner_fast);
     expect(CENTER, straight, straight);

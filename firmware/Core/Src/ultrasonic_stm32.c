@@ -1,6 +1,7 @@
 #include "ultrasonic.h"
 #include "ultrasonic_port.h"
 #include "board_pins.h"
+#include "encoder.h"
 
 uint32_t UlrHw_Lock(void)
 {
@@ -95,8 +96,16 @@ void TIM4_IRQHandler(void)
 
 void EXTI9_5_IRQHandler(void)
 {
-    /* EXTI5 is the only enabled line in this group today. Add dispatch if
-     * future modules enable EXTI6..9; never define a second group handler. */
+    /* 这一组现在有两路中断源：
+     *   EXTI5 = PA5 超声波回波（双边沿）
+     *   EXTI8 = PA8 左编码器 A 相（上升沿）
+     * 编码器先处理：只给计数器加一，几条指令；超声波要读定时器快照，
+     * 晚几个时钟周期完全无影响（1 MHz 计数，一条指令约 0.06 µs）。 */
+    if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_8) != 0U) {
+        __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_8);
+        Encoder_OnLeftEdge();
+    }
+
     if (__HAL_GPIO_EXTI_GET_IT(SONAR_ECHO_PIN) != 0U) {
         uint16_t counter = UlrHw_Counter();
         bool high = UlrHw_EchoHigh();

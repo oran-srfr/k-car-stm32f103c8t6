@@ -4,6 +4,7 @@
 #include "board_pins.h"
 #include "buzzer.h"
 #include "control_config.h"
+#include "encoder.h"
 #include "lcd.h"
 #include "lcd_init.h"
 #include "line_sensor.h"
@@ -11,6 +12,11 @@
 #include "ultrasonic.h"
 #include "vehicle_control.h"
 #include "stm32f1xx_hal.h"
+
+/* 说明：原先这里有一个"状态检测"调试行（S/E/L/O，画在 y=112），
+ * 它和编码器读数的 L 行使用同一个纵坐标，互相覆盖。
+ * 现在状态检测已不需要（循迹状态用调试器看 g_tracking_status 即可），
+ * 已整段删除，y=112 / y=132 全部让给编码器测速读数。 */
 
 static PDControllerConfig_t s_pd_config = {
     CONTROL_KP_DEFAULT,
@@ -110,6 +116,9 @@ void Modules_Init(void)
     LCD_Init();
     HCI_Init();
     (void)Attitude_Init(ATTITUDE_BAUD_RATE);
+    /* 编码器测速：只计数，不参与控制。用来判断"同样命令下左右轮实际转速是否一致"。
+     * 放在 LCD/HCI 之后初始化，避免占用的 EXTI 影响显示引脚扫描。 */
+    Encoder_Init();
     /* Motor output remains gated until the application requests FOLLOW. */
 }
 
@@ -132,6 +141,7 @@ void Modules_Poll(uint32_t now_ms, AppInputs *inputs)
     Sonar_Poll(now_ms, inputs);
     Tracking_Poll(now_ms, inputs);
     Parking_Poll(inputs);
+    Encoder_Poll(now_ms);
 }
 
 void Modules_RunStarted(AppMode mode, uint32_t now_ms)
@@ -210,20 +220,6 @@ static void DebugLine_AppendU16(char *line, uint16_t value, uint8_t width)
     }
 }
 
-static void DebugLine_AppendHex8(char *line, uint8_t value)
-{
-    static const char digits[] = "0123456789ABCDEF";
-    uint8_t pos = 0U;
-
-    while (pos < 16U && line[pos] != ' ') {
-        ++pos;
-    }
-    if (pos + 2U <= 16U) {
-        line[pos] = digits[(value >> 4U) & 0x0FU];
-        line[pos + 1U] = digits[value & 0x0FU];
-    }
-}
-
 static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
                            uint16_t color)
 {
@@ -240,32 +236,43 @@ static void DebugLine_Show(uint16_t y, uint8_t index, const char *text,
     }
 }
 
-static void Debug_Display(const AppStatus *status)
+/* ============================================================================
+ * 编码器测速读数（y=112 / y=132，1 Hz 刷新）
+ *
+ * 用途：判断"同样命令下左右轮实际转速是否一致"。
+ * 之前摆头到底是控制参数问题还是电机个体差异一直无法定论，
+ * 因为有编码器之前只能靠肉眼看轮子转得快慢 —— 人眼分辨不了。
+ *
+ * 显示格式：
+ *   y=112:  L <左轮最近 100ms 脉冲数>
+ *   y=132:  R <右轮最近 100ms 脉冲数>
+ * 两轮命令相同时（两个内探头都压线），这两个数应当接近相等；
+ * 长期相差 10% 以上就是电机/减速箱的开环不对称 → 用 straight_trim 补偿。
+ *
+ * 刷新率 1 Hz：两行共约 12 个字符，每次约 16 ms，摊到 1 秒是 1.6% CPU，
+ * 换来看得见的实时数据是值得的。车子静止时数字不变，脏标记会挡住重绘。
+ * ========================================================================== */
+#define ENC_READOUT_MS   (1000U)
+static uint32_t s_enc_readout_ms;
+
+static void Encoder_Readout(uint32_t now_ms)
 {
     char line[17];
 
-    /* S/E: app state/error; L/B: line status/black bitmap; O/D: output/driver. */
-    DebugLine_Clear(line);
-    DebugLine_Append(line, "S");
-    DebugLine_AppendU16(line, (uint16_t)status->state, 1U);
-    DebugLine_Append(line, "E");
-    DebugLine_AppendU16(line, (uint16_t)status->error, 1U);
-    DebugLine_Append(line, "L");
-    DebugLine_AppendU16(line, (uint16_t)g_tracking_status, 1U);
-    DebugLine_Append(line, "B");
-    DebugLine_AppendHex8(line, g_tracking_bits);
-    DebugLine_Append(line, "O");
-    DebugLine_AppendU16(line, g_motor_output_enabled ? 1U : 0U, 1U);
-    DebugLine_Append(line, "D");
-    DebugLine_AppendU16(line, g_motor_driver_enabled ? 1U : 0U, 1U);
-    DebugLine_Show(112U, 0U, line, WHITE);
+    if ((uint32_t)(now_ms - s_enc_readout_ms) < ENC_READOUT_MS) {
+        return;
+    }
+    s_enc_readout_ms = now_ms;
 
     DebugLine_Clear(line);
-    DebugLine_Append(line, "A");
-    DebugLine_AppendU16(line, (uint16_t)g_motor_driver_left_actual, 4U);
-    DebugLine_Append(line, "/");
-    DebugLine_AppendU16(line, (uint16_t)g_motor_driver_right_actual, 4U);
-    DebugLine_Show(132U, 1U, line, GREEN);
+    DebugLine_Append(line, "L");
+    DebugLine_AppendU16(line, Encoder_GetLeftDelta(), 5U);
+    DebugLine_Show(112U, 0U, line, CYAN);
+
+    DebugLine_Clear(line);
+    DebugLine_Append(line, "R");
+    DebugLine_AppendU16(line, Encoder_GetRightDelta(), 5U);
+    DebugLine_Show(132U, 1U, line, MAGENTA);
 }
 
 void Modules_Display(const AppStatus *status)
@@ -279,5 +286,5 @@ void Modules_Display(const AppStatus *status)
     HCI_RevCount = status->reverse_spaces;
     HCI_SideCount = status->side_spaces;
     HCI_Update();
-    Debug_Display(status);
+    Encoder_Readout(HAL_GetTick());
 }

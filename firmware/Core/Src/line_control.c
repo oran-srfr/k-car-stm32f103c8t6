@@ -12,8 +12,11 @@ LineControlResult_t LineControl_Sample(const PDControllerConfig_t *pd_config)
   result.raw_bits = (uint8_t)(result.raw.x1 | (result.raw.x2 << 1U) |
                               (result.raw.x3 << 2U) | (result.raw.x4 << 3U));
   result.track = LineTrack_Calculate(result.raw_bits);
+  /* 贴边循迹：PD 的目标不是偏差 0，而是 LINE_FOLLOW_TARGET_DEVIATION。
+   * 误差 = 实际偏差 - 设定值，于是车在设定偏移处得到一个稳定平台。 */
   result.pd = PDController_Calculate(result.track.status,
-                                     result.track.deviation,
+                                     result.track.deviation -
+                                         LINE_FOLLOW_TARGET_DEVIATION,
                                      pd_config);
 
   if (result.track.status == LINE_TRACK_STATUS_LOST)

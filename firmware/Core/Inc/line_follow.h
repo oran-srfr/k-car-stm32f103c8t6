@@ -13,6 +13,8 @@ typedef enum
   LINE_FOLLOW_LINE_LOST,
   LINE_FOLLOW_SEARCHING,
   LINE_FOLLOW_REACQUIRE,
+  LINE_FOLLOW_CORNER,      /* 直角：原地转向找拐弯后的线 */
+  LINE_FOLLOW_CROSSING,    /* 全黑：直行穿越粗线/交叉点 */
   LINE_FOLLOW_FAULT
 } LineFollowState_t;
 
@@ -61,6 +63,10 @@ void LineFollow_Start(void);
 void LineFollow_Stop(void);
 
 /** 执行一次状态机更新；只生成软件目标命令，不访问电机硬件。 */
+/** 把陀螺仪 yaw 角（度）与数据有效性喂给状态机，用于直角转向的角度控制。
+ * live=0 时直角自动退回按时间的方式。 */
+void LineFollow_SetYaw(float yaw_deg, uint8_t live);
+
 LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
                                      const MotorCommandConfig_t *motor_config,
                                      const LineFollowConfig_t *follow_config);

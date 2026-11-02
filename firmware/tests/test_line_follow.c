@@ -50,11 +50,17 @@ static LineFollowResult_t step(uint8_t bits)
 
 static void moving(LineFollowResult_t r)
 {
+    /* 上下界引用配置宏：这些值随调参变化（MAX_FORWARD 已经 770 → 900 → 930），
+     * 写死数字会让测试在调参后误报。
+     * 容差 0.5：MotorCommand_Calculate 里 base 先夹到 min+|c|、再算 base-c，
+     * 两次浮点运算后可能得到 399.99997 而非 400.0，语义上等于下限。 */
+    const float tol = 0.5f;
+
     assert(r.fault == LINE_FOLLOW_FAULT_NONE);
-    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.left_command <= 800.0f);
-    assert(r.right_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.right_command <= 800.0f);
+    assert(r.left_command >= CONTROL_MIN_FORWARD_COMMAND_DEFAULT - tol);
+    assert(r.left_command <= CONTROL_MAX_FORWARD_COMMAND_DEFAULT + tol);
+    assert(r.right_command >= CONTROL_MIN_FORWARD_COMMAND_DEFAULT - tol);
+    assert(r.right_command <= CONTROL_MAX_FORWARD_COMMAND_DEFAULT + tol);
 }
 
 static void stopped(LineFollowResult_t r)
@@ -75,18 +81,48 @@ static void test_geometry_and_small_corrections(void)
         if (errors[i] > 0) assert(r.left_command > r.right_command);
         if (errors[i] == 0) assert(r.left_command == r.right_command);
     }
-    /* One inner sensor: immediate partial steering without full saturation. */
+    /* One inner sensor: immediate partial steering without full saturation.
+     * 时间轴上有三个阶段，测试必须选对窗口：
+     *   第 1 拍     → 微分项给出有限提前量（增大修正）
+     *   第 2~20 拍  → D 按 alpha=0.25 衰减（时间常数约 4 拍，约 15 拍基本归零）
+     *   第 50 拍以后 → 同向偏差持续触发"强修正"，修正量 ×1.25（原设计）
+     * 所以"单内探头只做部分修正"要在 D 衰减后、强修正触发前检查。 */
     LineFollow_Start();
     (void)step(CENTER);
     LineFollowResult_t r = step(LEFT_INNER);
     assert(r.right_command - r.left_command > 100.0f);
-    assert(r.right_command - r.left_command < 200.0f);
+    assert(r.right_command - r.left_command < 300.0f);   /* 跳变瞬间：含 D 项提前量 */
+    moving(r);
+    for (int i = 0; i < 21; ++i) r = step(LEFT_INNER);
+    float d1 = r.right_command - r.left_command;
+    assert(d1 > 100.0f);            /* 单内探头确实在修正，不是装死 */
+    assert(d1 < 300.0f);            /* 未饱和（最大差速约 530） */
+    moving(r);
+
+    /* 分级性：偏差越大修正必须越强。比写死具体数值更能适应增益调参。 */
+    LineFollow_Start();
+    (void)step(CENTER);
+    for (int i = 0; i < 21; ++i) r = step(LEFT_PAIR);
+    assert((r.right_command - r.left_command) > d1);
     moving(r);
     r = step(CENTER);
     assert(fabsf(r.control.pd.output) <= CONTROL_PD_D_TERM_LIMIT);
     for (int i = 0; i < 100; ++i) r = step(CENTER);
     assert(fabsf(r.left_command - r.right_command) < 0.01f);
     assert(r.base_speed == CONTROL_BASE_SPEED_DEFAULT);
+
+    /* 居中时两轮必须严格同速 —— 这是实测暴露过的问题：
+     * 微分项在 dev=0 时会残留 ±37 的输出，导致两轮差 21%（570/470）。
+     * 反复在"偏一侧 / 回中"之间跳变，检查回中后是否还有转速差。 */
+    LineFollow_Start();
+    for (int i = 0; i < 8; ++i) {
+        (void)step(RIGHT_INNER);
+        (void)step(CENTER);
+    }
+    r = step(CENTER);
+    assert(r.control.track.deviation == 0.0f);
+    assert(fabsf(r.left_command - r.right_command) < 0.01f);
+    assert(fabsf(r.control.pd.output) < 0.01f);
 }
 
 static void test_recovery(void)
@@ -106,12 +142,14 @@ static void test_recovery(void)
     for (unsigned i = 1; i < follow.reacquire_cycles; ++i) r = step(RIGHT_OUTER);
     assert(r.state == LINE_FOLLOW_TRACKING && r.lost_cycles == 0);
 
-    /* A single spurious detection cannot perpetually reset the search budget. */
+    /* A single spurious detection cannot perpetually reset the search budget.
+     * 注意用内探头（|dev|=1）：外探头丢线会走"直角原地转向"分支（见 test_corner.c），
+     * 这里要验证的是前进搜索的丢线预算，所以选一个不触发直角的偏差。 */
     LineFollow_Start();
-    (void)step(RIGHT_OUTER);
+    (void)step(RIGHT_INNER);
     for (unsigned i = 0; i < follow.max_lost_cycles; ++i) {
         moving(step(LOST));
-        moving(step(RIGHT_OUTER));
+        moving(step(RIGHT_INNER));
     }
     r = step(LOST);
     assert(r.fault == LINE_FOLLOW_FAULT_LOST_TIMEOUT);
@@ -132,8 +170,10 @@ static void test_progressive_steering(void)
 
     assert(fabsf(r.left_command - r.right_command) > initial_differential);
     assert(r.left_command < r.right_command);
-    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD);
-    assert(r.right_command <= 800.0f);
+    /* 容差 0.5：强修正时 left = base + c 经过两次浮点运算，可能得 449.99997。
+     * 上界同样引用宏，不要写死 800（MAX_FORWARD 已改成 930）。 */
+    assert(r.left_command >= LINE_FOLLOW_HARD_TURN_MIN_FORWARD - 0.5f);
+    assert(r.right_command <= CONTROL_MAX_FORWARD_COMMAND_DEFAULT + 0.5f);
 }
 
 static void test_stops_and_curve_hold(void)
@@ -144,9 +184,25 @@ static void test_stops_and_curve_hold(void)
     assert(step(LOST).fault == LINE_FOLLOW_FAULT_NO_VALID_HISTORY);
     LineFollow_Start();
     (void)step(CENTER);
+    /* 全黑不再立刻判故障：先直行穿越（直角胶带重叠、粗线、交叉点），
+     * 超过预算仍全黑才停。详见 test_corner.c 的完整覆盖。 */
+#if LINE_FOLLOW_ALL_BLACK_CROSSING
+    {
+        LineFollowResult_t cross = step(ALL_BLACK);
+        assert(cross.fault == LINE_FOLLOW_FAULT_NONE);
+        assert(cross.state == LINE_FOLLOW_CROSSING);
+        assert(cross.left_command == LINE_FOLLOW_ALL_BLACK_CREEP_DUTY);
+        for (unsigned i = 0; i < LINE_FOLLOW_ALL_BLACK_MAX_CYCLES; ++i) {
+            (void)step(ALL_BLACK);
+        }
+        stopped(step(ALL_BLACK));   /* 预算用尽 → 判故障停车 */
+    }
+#else
     stopped(step(ALL_BLACK));
+#endif
     LineFollow_Start();
-    moving(step(LEFT_INNER));
+    /* 贴边循迹把 straight_max 放宽到 1.5，所以要用 |dev| = 2 才进入弯道档 */
+    moving(step(LEFT_OUTER | LEFT_INNER));
     for (unsigned i = 0; i < LINE_FOLLOW_CURVE_HOLD_CYCLES; ++i) {
         LineFollowResult_t r = step(CENTER);
         moving(r);
@@ -173,6 +229,14 @@ static float segment_distance(float x, float y, float y_line)
  * Assumed chassis: 14 cm wheel spacing, sensor bar 8 cm ahead of axle,
  * 1 cm sensor spacing, 15 mm black stripe, speed=0.6*duty m/s.
  * This ideal differential-drive model is a regression, NOT hardware proof. */
+#define R60_STEP_BUDGET   (16000U)
+/* 步数预算推导：路径长 ≈ 0.75(AB) + π·0.60(半圆) + 0.30(CD 到 x<0.55) ≈ 2.94 m。
+ * 车速 = 0.6 × 占空比，且弧线上用 curve_speed 而不是基速：
+ *   直道 520 → 0.312 m/s；弧线 400 → 0.24 m/s
+ *   时间 ≈ 0.75/0.312 + 1.885/0.24 + 0.30/0.312 ≈ 2.4 + 7.9 + 1.0 ≈ 11.3 s
+ * 再留 30% 余量（低增益电机更慢），预算取 16000（16 s）。
+ * 历史：6000（基速 650 时代估的，从未真正执行过）→ 12000 → 16000。 */
+
 static float track_distance(float x, float y)
 {
     float distance = fminf(segment_distance(x, y, 0.0f),
@@ -187,7 +251,7 @@ static void test_r60_arc(float left_gain, float initial_heading, float mirror)
     float max_distance = 0.0f;
     unsigned cycles;
     LineFollow_Start();
-    for (cycles = 0; cycles < 6000; ++cycles) {
+    for (cycles = 0; cycles < R60_STEP_BUDGET; ++cycles) {
         uint8_t black = 0;
         /* Physical left-to-right sensor positions, independent of connector order. */
         for (unsigned bit = 0; bit < 4; ++bit) {
@@ -210,7 +274,7 @@ static void test_r60_arc(float left_gain, float initial_heading, float mirror)
     }
     printf("R60 model: motor gain %.2f, heading %.2f, turn %+.0f: %u steps, max axle error %.1f mm\n",
            left_gain, initial_heading, mirror, cycles, max_distance * 1000.0f);
-    assert(cycles < 6000);
+    assert(cycles < R60_STEP_BUDGET);
     assert(max_distance < 0.04f);
     assert(cosf(heading) < -0.95f);
 }

@@ -81,24 +81,33 @@ static void test_laps(void)
 static void test_obstacle(void)
 {
     begin(APP_MODE_LAPS, 0);
-    input.distance_mm = 80;
-    step(10);
+    input.distance_mm = 70; step(10);
     assert(App_GetStatus().state == APP_OBSTACLE_HOLD && drive == APP_DRIVE_STOP);
-    step(20);
-    input.distance_mm = 90;
-    step(30);
+    assert(sounds[APP_SOUND_OBSTACLE] == 0);
+    /* Re-reading a cached echo cannot satisfy three independent samples. */
+    App_Task(11); App_Task(12);
+    assert(sounds[APP_SOUND_OBSTACLE] == 0);
+    step(70); step(130);
     assert(App_GetStatus().obstacles == 1 && sounds[APP_SOUND_OBSTACLE] == 1);
+    input.distance_mm = 101; step(190); /* one far glitch cannot unlatch */
     assert(drive == APP_DRIVE_STOP);
-    input.sonar_valid = false;
-    step(40);
-    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
-    input.sonar_valid = true;
-    input.distance_mm = 101;
-    step(50);
-    assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
-    input.distance_mm = 70;
-    step(60);
-    assert(App_GetStatus().obstacles == 2);
+    input.sonar_valid = false; step(250);
+    assert(drive == APP_DRIVE_STOP); /* missing echo cannot authorize motion */
+    input.sonar_valid = true; input.distance_mm = 70; step(310); step(370); step(430);
+    assert(sounds[APP_SOUND_OBSTACLE] == 1);
+    input.distance_mm = 101; step(490); step(550);
+    assert(drive == APP_DRIVE_STOP);
+    step(610); assert(drive == APP_DRIVE_FOLLOW);
+    input.distance_mm = 70; step(670); step(730); step(790);
+    assert(App_GetStatus().obstacles == 2 && sounds[APP_SOUND_OBSTACLE] == 2);
+
+    begin(APP_MODE_LAPS, 0);
+    /* Alternating spikes may stop the car, but never generate repeated tones. */
+    for(unsigned t=10;t<2000;t+=60) {
+        input.distance_mm = ((t/60)&1) ? 500 : 70;
+        step(t);
+    }
+    assert(sounds[APP_SOUND_OBSTACLE] == 0);
 }
 
 static void test_invalid_and_stop(void)
@@ -120,7 +129,9 @@ static void test_invalid_and_stop(void)
     assert(App_GetStatus().state == APP_WAIT_START && drive == APP_DRIVE_STOP);
     assert(App_GetStatus().error == APP_ERROR_NONE);
     assert(App_GetStatus().auto_start_armed);
-    for (unsigned now = 214; now <= 404; now += 10) { step(now); }
+    /* 重新起步需要连续 200 ms 稳定（start_qualifying 从 214 开始计），
+     * 所以循环必须跨过 214+200=414 ms，原来只走到 404 会差 10 ms。 */
+    for (unsigned now = 214; now <= 520; now += 10) { step(now); }
     assert(App_GetStatus().state == APP_FOLLOW_LINE && drive == APP_DRIVE_FOLLOW);
 }
 
@@ -255,6 +266,10 @@ static void test_wrap_and_display(void)
 
 int main(void)
 {
+    begin(APP_MODE_LAPS, 0);
+    input.run_finished = true;
+    step(10);
+    assert(App_GetStatus().state == APP_FINISHED && drive == APP_DRIVE_STOP);
     test_laps();
     test_obstacle();
     test_invalid_and_stop();

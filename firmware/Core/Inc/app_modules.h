@@ -5,6 +5,7 @@
 
 /* Nonblocking module boundaries. Implement these as drivers become available. */
 void Modules_Init(void);
+void Modules_EmergencyStop(void);
 void Modules_Poll(uint32_t now_ms, AppInputs *inputs);
 void Modules_RunStarted(AppMode mode, uint32_t now_ms);
 void Modules_RunStopped(void);

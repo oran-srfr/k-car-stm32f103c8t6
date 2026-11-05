@@ -28,7 +28,9 @@ static uint32_t s_window_start_ms = 0U;
 /* ---- 闭环配平状态 ---- */
 static float s_cmd_left = 0.0f;    /* VehicleControl 每周期喂进来的软件命令 */
 static float s_cmd_right = 0.0f;
+#if ENCODER_BALANCE_ENABLE
 static float s_balance = 0.0f;     /* 积分得到的补偿量（未乘符号） */
+#endif
 
 /* 调试器可直接观察这四个变量，不必看屏幕 */
 volatile uint32_t g_enc_left_total = 0U;

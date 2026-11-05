@@ -92,19 +92,44 @@
  *   ⚠ 三个值必须同步满足 base >= curve >= sharp >= min，
  *     否则 LineFollow_ConfigIsValid() 判参数非法 → 直接进故障、电机清零。 */
 #define CONTROL_BASE_SPEED_DEFAULT           (520.0f)
-#define CONTROL_MIN_FORWARD_COMMAND_DEFAULT  (320.0f)
+/* 单轮命令下限（= 内轮最低转速）。
+ *
+ * 原来 320：弧线上 base 400、修正 60 时，内轮只有 400-60 = 340，
+ * 带负载时电机转不动 → 内轮刹住 → 车几乎走直线 → "弧线转不过去弯"。
+ * 直线两轮都是 520 远高于门限，所以直线一直正常，问题只在弧线。
+ *
+ * 改成 450：MotorCommand 会把 base 抬到 min+|c|，于是弧线变成
+ *   外轮 570 / 内轮 450 —— 两轮都在能转的区间，差速仍是 120 不变。
+ * 直线（base 520 > 450）完全不受影响；直角走独立状态机也不受影响。
+ * 代价：headroom 由 305 降到 240（我们差速上限本来就是 160，不受限）。 */
+#define CONTROL_MIN_FORWARD_COMMAND_DEFAULT  (450.0f)
 #define CONTROL_MAX_FORWARD_COMMAND_DEFAULT  (930.0f)
 #define CONTROL_STRAIGHT_TRIM_DEFAULT        (0.0f)
 
-#define LINE_FOLLOW_CURVE_SPEED_DEFAULT             (400.0f)
-#define LINE_FOLLOW_SHARP_CURVE_SPEED_DEFAULT       (360.0f)
+#define LINE_FOLLOW_CURVE_SPEED_DEFAULT             (480.0f)
+#define LINE_FOLLOW_SHARP_CURVE_SPEED_DEFAULT       (450.0f)
 #define LINE_FOLLOW_SEARCH_SPEED_DEFAULT            (650.0f)
-#define LINE_FOLLOW_STRAIGHT_MAX_DEVIATION_DEFAULT   (1.5f)
+/* 直线/弧线的"基速分档"门限（按误差判）。贴边目标 dev=-1 时：
+ *   直线稳态 dev=-1 → 误差 0   → 用 base_speed(520)
+ *   弧线稳态 dev≈0  → 误差 ≥1  → 落进 curve_speed(400)
+ * 原来 1.5 时弧线误差只有 1，仍然吃 520 的直线速度 → 弧线上太快，
+ * 需要约 48 度/秒 的角速度和 65 的差速才能维持 → 顶不住 → 卡住。
+ * 改成 0.75 后：直线(误差 0)不受影响，弧线(误差 1)自动降到 400。
+ * 直角走独立状态机，完全不受这个门限影响。 */
+#define LINE_FOLLOW_STRAIGHT_MAX_DEVIATION_DEFAULT   (0.75f)
 #define LINE_FOLLOW_CURVE_MAX_DEVIATION_DEFAULT      (2.5f)
 #define LINE_FOLLOW_SEARCH_CORRECTION_DEFAULT       (120.0f)
+/* Brief, gentle reacquisition after a gated pause; these are driver units.
+ * Defaults mix to 450/570 (or 570/450), never the normal full-strength search. */
+#define LINE_FOLLOW_RESUME_SEARCH_MS                 (500U)
+#define LINE_FOLLOW_RESUME_SEARCH_BASE               (510.0f)
+#define LINE_FOLLOW_RESUME_SEARCH_CORRECTION         (60.0f)
+
 #define LINE_FOLLOW_MAX_LOST_CYCLES_DEFAULT          (2500U)
 #define LINE_FOLLOW_REACQUIRE_CYCLES_DEFAULT         (10U)
-#define LINE_FOLLOW_CURVE_HOLD_CYCLES                (20U)
+/* 回到"直线档"后仍保持弯道速度多少拍。原来 20 拍太短，
+ * 弧线上误差在 0/1 之间跳时 520<->400 会来回切；100 拍 = 100 ms。 */
+#define LINE_FOLLOW_CURVE_HOLD_CYCLES                (100U)
 #define LINE_FOLLOW_BASE_STEP                       (10.0f)
 /* 同方向偏差持续 30 ms，或已到外探头时进入强修正。
  * 45% 内轮下限只在强修正中启用；普通循迹仍保持 55% 下限。 */
@@ -114,15 +139,78 @@
  * 直线上的短暂偏离在它之前就修正完了，只有弧线上那种持续偏差才触发放大。
  * 历史：3 ms（任何偏差都放大，把分级响应压回开关量）
  *        → 50 ms → 200 ms（本次，配合 Kp 降到 85）。 */
-#define LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES         (200U)
+#define LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES         (20U)
 /* 强修正退出条件：居中或反向持续这么多周期才撤销放大。
  * 原来是"dev 一归零就立即撤销"，而弧线上偏差会在 0 与 ±1 之间来回跳，
  * 导致放大以 2.5 倍幅度反复通断 —— 实测表现为弧线卡顿。
  * 400 ms 的释放在弧线上足够长，不会中途退出；出弯后又会自动恢复轻修正。 */
 #define LINE_FOLLOW_HARD_TURN_RELEASE_CYCLES         (400U)
+/* 强修正触发门限（按误差判，误差 = 偏差 - 目标）。
+ * 贴边目标 dev=-1，所以：
+ *   dev =  0（内侧两个灯都亮）→ 误差 +1  ← 现场要求"立刻反应"，必须触发
+ *   dev = -1（目标，一个内灯）→ 误差  0  ← 不触发
+ * 原来 1.5 时 dev=0 不触发，要等同向 200 拍（200 ms）才放大，表现为"反应慢"。
+ * 改成 1.0 后内侧两灯一亮立刻给足差速。 */
 #define LINE_FOLLOW_HARD_TURN_DEVIATION              (1.5f)
 #define LINE_FOLLOW_HARD_TURN_MIN_FORWARD            (450.0f)
-#define LINE_FOLLOW_HARD_TURN_GAIN                   (2.5f)
+#define LINE_FOLLOW_HARD_TURN_GAIN                   (2.8f)
+
+/* ===== 只压到单个外探头时，降低两轮转速差 =====
+ *
+ * 现象：只有左外或右外一个探头压线（|偏差| = 3）时，车会猛地甩一下。
+ * 原因：偏差 3 → 误差 2 → Kp 60 × 2 = 120，再叠加强修正 ×2.5 与内轮下限 450，
+ *       实测两轮差可以到 480（内轮 450 / 外轮 930），对"只是偏了一点"来说过猛。
+ *
+ * 对策：判定"只有外侧探头压线"时，
+ *   ① 关闭强修正放大（不再 ×2.5）
+ *   ② 修正量乘以 OUTER_ONLY_SCALE
+ *
+ * 调参：
+ *   还嫌猛 → OUTER_ONLY_SCALE 0.6 → 0.4
+ *   修正太慢、车回不来 → 0.6 → 0.8 */
+#define LINE_FOLLOW_OUTER_ONLY_DEVIATION             (2.5f)
+/* 修正量的绝对上限（不再用比例缩放，改成限幅 —— 这样左右两侧行为对称：
+ * 贴边目标 -1 时，左外对应误差 -2、右外对应误差 +4，按比例缩放会让两边不一致） */
+/* ===== 偏航角速度阻尼（治"弧线内扣 / 车身斜穿"）=====
+ * 4 路探头只测横向偏移，测不到车头方向；现场视频里车身与胶带斜交 30~40 度，
+ * 探头却仍报 dev=-1（目标值），于是车带着航向误差走 → 偏移变大才猛修 → 甩头摆动。
+ * 用陀螺仪测带符号角速度做负阻尼，直接压住这种绕轴摆动。
+ *
+ * YAW_DAMP 是"每 (度/秒) 扣减多少差速"，先给 0.8：
+ *   原地转 450 占空比约 120 度/秒 → 扣 0.8*120 ≈ 96 差速，正好压住。
+ * 上车后：
+ *   摆动变小、车头与胶带平行 → 好用，可再试 1.0
+ *   摆得更厉害（甚至发散）  → 陀螺仪极性相反，把 SIGN 改成 (-1.0f)
+ *   车变"发木"、跟不上线   → 把 YAW_DAMP 降到 0.5 */
+/* ===== 自适应曲率前馈（治"弧线拖到偏差大了才猛修 → 转过头"）=====
+ * 贴边目标 dev=-1 时，纯 P 在弯道上必须靠持续误差才能转弯，
+ * 于是车先直走、等偏差攒大再猛修，来回反复。
+ * 这里学一个【有界的弯道补偿量】补上"弯道本该有的差速"。
+ *
+ * FF_GAIN   每拍按误差累积的速度：误差 1 时约 35 拍(35 ms)学到 70
+ * FF_LIMIT  最大补偿量（R60@520 约需 65，留两倍余量）
+ * FF_LEAK   真直线上每拍泄放系数（0.98 → 约 90% 在 110 ms 内泄掉）
+ * FF_ERR_MIN 误差小于这个值就认为"不需要学"
+ * FF_LEAK_YAW_MAX 角速度小于这个值才认为是真直线（弯道上不泄放） */
+#define LINE_FOLLOW_FF_ENABLE                        (1U)
+#define LINE_FOLLOW_FF_GAIN                          (2.0f)
+#define LINE_FOLLOW_FF_LIMIT                         (120.0f)
+/* Slow release even while rotating; prevents a self-maintained bias. */
+#define LINE_FOLLOW_FF_TURN_LEAK                    (0.998f)
+#define LINE_FOLLOW_FF_LEAK                          (0.98f)
+#define LINE_FOLLOW_FF_ERR_MIN                       (0.25f)
+#define LINE_FOLLOW_FF_LEAK_YAW_MAX                  (10.0f)
+#define LINE_FOLLOW_YAW_DAMP_ENABLE                  (1U)
+#define LINE_FOLLOW_YAW_DAMP                         (0.8f)
+#define LINE_FOLLOW_YAW_DAMP_SIGN                    (1.0f)
+#define LINE_FOLLOW_YAW_DAMP_LIMIT                   (120.0f)
+/* yaw 变化超过这个角度才更新角速度估计（太小会被量化噪声干扰） */
+#define LINE_FOLLOW_YAW_RATE_MIN_DEG                 (0.3f)
+/* 慢平均系数：用来分离"稳态转弯"与"摆动"。1/alpha = 时间常数(ms)。
+ * 0.02 → 约 50 ms。弧线上的恒定转弯会被慢平均跟上，阻尼归零；
+ * 只有快速反向的摆动才被抑制。 */
+#define LINE_FOLLOW_YAW_RATE_SLOW_ALPHA              (0.02f)
+#define LINE_FOLLOW_OUTER_ONLY_MAX_CORRECTION        (72.0f)
 /* Direct four-sensor recovery uses a two-wheel differential at all times.
  *
  * ===== 2026-10-30 第五轮：内档差速 450 → 240 =====
@@ -146,109 +234,128 @@
  * 收到 25 周期（≈25 ms），一丢线几乎立刻开始朝最后方向找。 */
 #define LINE_FOLLOW_ALL_OFF_SLOW_CYCLES              (25U)
 
-/* ===== 直角（90°）处理 —— 已退回 v1 =====
- * v2（扫描式：丢线 150 ms 后原地扫描、300 ms 反向）实测导致直线出现摆头，
- * 已撤回。v1 的行为：丢线前压到外探头（|dev| >= 2）才原地转向 900 ms。
- * 直角本身仍未解决，但优先保证直线与弧线的稳定（见 调参记录.md）。 */
+/* =====================================================================
+ * 直角（90°）处理 —— 重写版
+ *
+ * 三个阶段，规则只有一条：
+ *   ① 判定：线丢了并且已持续 ARM 周期 + 丢线前 |偏差| 峰值 >= PEAK
+ *            （说明线是被"扫向一侧"之后消失的，直线偶发掉线没有这个过程）
+ *            + 本次丢线没试过 + 不在冷却期
+ *   ② 执行：停稳 SETTLE → 原地转向，方向 = 最后看到线的一侧
+ *            完成条件只认【陀螺仪到角】(TARGET_DEG)；
+ *            陀螺仪无数据时退化为一固定时长（TIME_PIVOT）
+ *            转超 MAX_DEG 还没到角就放弃，退回前进搜索
+ *   ③ 收尾：设冷却（防出弯误判）+ 出弯软启动（修正量从 RECOVER_MIN 渐升）
+ *
+ * 明确不做的事：
+ *   ✗ 不在转向期间"看到线就退出"——探头扫过新线的窗口只有几十毫秒，必然提前退出
+ *   ✗ 不做"单段超时后反向再扫"——那正是"转 30 度后反着转"的根源
+ *   ✗ 不向前滚（会先掉出线外）
+ * ===================================================================== */
 #ifndef LINE_FOLLOW_CORNER_ENABLE
 #define LINE_FOLLOW_CORNER_ENABLE                    (1)
 #endif
-/* 触发：丢线前的偏差已经偏向一侧（贴边循迹下正常是 -1，拐角时会被扫到 -2/-3）。
- * 1.5 比原来的 2.0 略松，因为贴边目标本身占了一格。 */
-#define LINE_FOLLOW_CORNER_TRIGGER_DEVIATION         (1.5f)
-/* ★ 直角特征（现场确认）：拐弯处线同时压住【两个内探头 + 一侧外探头】。
- *   看到这个特征后 SIG_WINDOW 周期内丢线 → 判定为直角，方向由"哪一侧外探头亮"决定。
- *   原来还有一条"丢线 40 ms 就算直角"的宽泛兜底，会误伤直线与弧线，已删除。 */
-/* 直角判据 = 【三灯特征出现过】AND【丢线持续 >= ARM 周期】。
- *
- * 为什么用"与"而不是单条：
- *   只看三灯特征 → 弧线上偶尔也会出现，会误触发；
- *   只看丢线时长 → 直线抖动/弧线短暂丢线也会满足；
- *   两者同时满足 → 弧线（线连续、不会持续丢线）和直线（没有三灯特征）都不会触发，
- *                  而直角（特征 + 线真的断了）一定触发。
- *
- * 窗口放宽到 400：直角处图案会在"三灯 / 两内"之间来回跳，
- * 若把窗口设得太小（曾用 80），最后一次看到三灯到真正全白超过窗口就漏判，
- * 表现为"识别不到直角、直接开过去"。 */
-#define LINE_FOLLOW_CORNER_SIG_WINDOW_CYCLES         (400U)
-/* 丢线持续这么久，才认为"线真的断了"而不是一次抖动。 */
-#define LINE_FOLLOW_CORNER_ARM_CYCLES                (100U)
-/* ① 先停稳再转：消除冲进拐角的惯性（允许停车，见需求 B1）。 */
-#define LINE_FOLLOW_CORNER_SETTLE_CYCLES             (50U)
-/* ② 原地转向占空比。原来 330 偏弱：前驱+后万向轮的底盘在转向时要横向拖动
- *    万向轮，330 经常转不动（视频里"斜着停住一秒"就是它）。提高到 450。 */
-#define LINE_FOLLOW_CORNER_PIVOT_DUTY                (450.0f)
-/* ③ 确认：探头连续这么多周期看到线才算真的找到，避免"扫到一下又丢"的来回抽搐。 */
-/* 起转后的"闭眼"时间：这段时间内不承认任何"看见线"。
- * 原因：直角触发时探头往往还压在旧线附近，若一起转就认线，25 ms 后就会退出，
- * 结果车只转了 5~10 度 —— 实测的"直角转不彻底"就是这个。
- * 300 ms 在占空比 450 下大约对应 45~60 度，之后再找新线才不会提前退出。 */
-#define LINE_FOLLOW_CORNER_MIN_PIVOT_CYCLES          (300U)
-/* 退出直角时要求的"目标图案"容差：
- * 只接受 误差 ∈ [-1, +1]，即 偏差 ∈ {TARGET-1, TARGET, TARGET+1}。
- * 目标 TARGET = -1 → 接受 {-2, -1, 0}（线在左侧或正中），
- * 拒绝右侧图案（说明还没转到 90 度）。 */
-/* ===== 陀螺仪辅助直角 =====
- *
- * 问题：原地转向的角度取决于电量、地面摩擦、万向轮阻力，同一段时间转过的角度
- *       差别很大 —— 实测"有时候能转过去，有时候转不过去"。
- * 做法：用 MPU6050 的 yaw 角测量【实际转过的角度】：
- *       起转时记下 yaw_start，转向中算 |normalize(yaw_now - yaw_start)|，
- *       转到 BLIND_DEG 才允许"看线退出"（替代原来按时间的闭眼期），
- *       转到 MAX_DEG 还没找到线就放弃转向、退回前进搜索。
- * 兜底：若陀螺仪没有数据（live=0），自动退回按时间的方式，不影响使用。
- *
- * 调法：
- *   转不够 → BLIND_DEG 55 → 65
- *   转过头 → BLIND_DEG 55 → 45，或 MAX_DEG 110 → 100
- *   陀螺仪数据不可用时看 MIN_PIVOT/LEG 两个时间参数 */
-/* ===== 直角：先向前滚一段，再原地转（几何修正）=====
- *
- * 探头阵列在驱动轴前方约 8 cm，拐角丢线时探头刚越过拐角约 2 cm。
- * 此时直接原地转 90°，探头离新线的横向距离约 8-2 = 6 cm，
- * 而阵列总宽只有约 4 cm —— 够不到新线，表现为"转满了反而找不到线"。
- *
- * 所以丢线后先【向前滚一段】把这段偏移补掉（滚 5 cm 左右），
- * 再原地转 90°，探头就能正好压在新线上。
- * 占空比 450 时速度约 0.15~0.2 m/s，300 ms ≈ 4.5~6 cm。 */
-/* 向前滚：默认关闭（0）。
- * 我原来按"探头在驱动轴前 8 cm"推算，认为必须滚 5 cm 才能让探头够到新线；
- * 但实测"不滚反而更容易接上"，说明实际偏移比推算值小。
- * 而且这一滚是往"线已经拐走"的区域开，会先掉出线外。
- * 需要时可以重新打开（例如探头离轴确实远的情况）。 */
-#define LINE_FOLLOW_CORNER_CREEP_CYCLES              (0U)
-#define LINE_FOLLOW_CORNER_CREEP_DUTY                (450.0f)
-/* 陀螺仪可用时的目标转角：转到这个角度就结束转向（不看线，直接交给循迹）。
- * 比 90 略小一点，留一点余量给循迹收尾。 */
-/* 目标转角：90 度（按实际测试要求）。
- *
- * 说明：转满 90 度后车头与新线平行，探头可能正好够不到新线，此时会走正常的
- * 前进搜索去重新捕获（有 MAG_LOST 预算兜底，不会判故障）。
- * 若实测"转完总是接不上"，把该值降到 84~86 即可，其它不用动。 */
-#define LINE_FOLLOW_CORNER_TARGET_DEG                (90.0f)
-#define LINE_FOLLOW_CORNER_BLIND_DEG                 (55.0f)
-#define LINE_FOLLOW_CORNER_MAX_DEG                   (110.0f)
-#define LINE_FOLLOW_CORNER_EXIT_TOLERANCE            (1.0f)
-#define LINE_FOLLOW_CORNER_CONFIRM_CYCLES            (25U)
-/* ④ 单方向最多转这么久，还看不到线就反向再扫一次（不倒车，只换转向方向）。 */
-#define LINE_FOLLOW_CORNER_LEG_CYCLES                (700U)
-/* ⑤ 总时长上限：停稳 50 + 两段 700×2 = 1450，给到 1800 留余量，
- *    超过就退回前进搜索（不判故障）。 */
-#define LINE_FOLLOW_CORNER_PIVOT_TOTAL_CYCLES        (1800U)
-#define LINE_FOLLOW_ALL_BLACK_CROSSING               (1)
-#define LINE_FOLLOW_ALL_BLACK_CREEP_DUTY             (450.0f)
-#define LINE_FOLLOW_ALL_BLACK_MAX_CYCLES             (300U)
 
-/* ===== 出直角后的修正量软启动（治"直角之后直线摆头极其严重"）=====
- * 现象：直角原地转向完成、刚重新看见线时，偏差往往直接落在 2~3 格（外探头），
- *       而 |dev| >= 1.5 会立即触发强修正（×1.8 → 差速 480），
- *       车被猛地甩出去，再反向满力拉回，形成剧烈来回摆。
- * 处理：从 CORNER 状态退出后，修正量按 RECOVER_MIN → 100% 线性爬升，
- *       期间不叠加 1.8 倍强修正放大。
- * 调法：还甩尾 → RECOVER_CYCLES 250 → 400，或 RECOVER_MIN 0.35 → 0.25
- *       恢复太慢、直角后跟不上 → RECOVER_CYCLES 250 → 150 */
-#define LINE_FOLLOW_CORNER_RECOVER_CYCLES            (250U)
-#define LINE_FOLLOW_CORNER_RECOVER_MIN               (0.35f)
+/* 丢线持续多久才算"线真的断了"（不是一次抖动）。
+ *
+ * 从 100 收到 50：原来丢线后车会先在【前进搜索 650】里跑 100 ms，
+ * 相当于"识别到直角还往前冲 3~4 cm"，然后才开始转 —— 现场很明显。
+ * 现在判定要求三灯特征，证据已经足够，50 ms 就够滤掉抖动。
+ * 再往前冲的代价：约 1.5 cm。 */
+/* Brief all-black overlaps are crossings, not immediate faults. */
+#ifndef LINE_FOLLOW_ALL_BLACK_CROSSING
+#define LINE_FOLLOW_ALL_BLACK_CROSSING               (1U)
+#endif
+#define LINE_FOLLOW_ALL_BLACK_MAX_CYCLES             (150U)
+#define LINE_FOLLOW_ALL_BLACK_CREEP_DUTY              (450.0f)
+
+#define LINE_FOLLOW_CORNER_ARM_CYCLES                (50U)
+/* 三灯特征的有效窗口：看到"两内 + 一侧外"之后，这么久之内丢线就算直角。
+ * 400 ms 足够覆盖"特征出现 → 线断开"之间的间隔，又不会太久。 */
+#define LINE_FOLLOW_CORNER_SIG_WINDOW_CYCLES         (400U)
+/* 停稳分两段：
+ *   ① 主动反向刹车 STOP：两轮给负命令，把冲进拐角的前进惯性真正刹住。
+ *      原来只是把命令清零，车会靠惯性继续滑 1~2 cm，
+ *      滑动中还可能带出偏航 —— 转到 90 度时看起来就"转过头"。
+ *   ② 静止保持 SETTLE：两轮 0，等车身稳下来。 */
+#define LINE_FOLLOW_CORNER_STOP_DUTY                 (300.0f)
+#define LINE_FOLLOW_CORNER_STOP_CYCLES               (70U)
+#define LINE_FOLLOW_CORNER_SETTLE_CYCLES             (50U)
+/* 原地转向占空比 */
+#define LINE_FOLLOW_CORNER_PIVOT_DUTY                (500.0f)
+/* 陀螺仪可用时的目标转角与上限 */
+/* Field adjustment: 85 -> 95 degrees to add about 10 degrees to the turn.
+ * Pivot duty 450 -> 500 is a small speed increase; verify on the actual floor. */
+#define LINE_FOLLOW_CORNER_TARGET_DEG                (95.0f)
+/* 陀螺仪不可用时的转向时长（不反转，到时间就收工） */
+#define LINE_FOLLOW_CORNER_TIME_PIVOT_CYCLES         (900U)
+/* 绝对上限：不管陀螺仪说什么，转到这么久必须结束。
+ * 防"陀螺仪中途不再更新、角度冻结"导致一直转下去。 */
+#define LINE_FOLLOW_CORNER_MAX_CYCLES                (1600U)
+/* 刹车脉冲：到达目标角后，反向给一小段，抵消车身的角速度惯性。
+ * 原来到角直接把两轮清零，车会靠惯性继续转过头 10~20 度。 */
+#define LINE_FOLLOW_CORNER_BRAKE_CYCLES              (120U)   /* 陀螺仪无效时的定长兜底 */
+#define LINE_FOLLOW_CORNER_BRAKE_DUTY                (340.0f)
+
+/* 提前量：按实测角速度预测"还会再转多少"，提前开始刹车。
+ *
+ * 只按"到 90° 才刹"的话，车到 90° 时仍带角速度，刹车本身还要时间才生效，
+ * 必然冲过去一点（这是"角度显示 90 但仍然过转"的直接原因）。
+ *
+ * 判定：当前角 + 角速度 × 提前量 >= 90°  →  立即开始刹
+ *   角速度 150°/s、提前量 120 ms → 多算 18° → 在 72° 就开始刹，最终落在 90° 附近。 */
+#define LINE_FOLLOW_CORNER_BRAKE_LEAD_CYCLES         (120U)
+
+/* ===== 角度收尾（保证最终落在 90°）=====
+ *
+ * 刹车参数是"开环"的：不管怎么调，只能对某一种进弯速度刚好
+ * （实测：第一次好、后续过转；把刹车改猛之后又变成第一次也过转）。
+ *
+ * 所以刹车结束后再加一段【按实测最终角度】的慢速修正：
+ *   最终 > 90+容差 → 反向慢转回来
+ *   最终 < 90−容差 → 同向慢转补足
+ * 力度只有 FIX_DUTY（远小于转向 450），不会打滑；最多 FIX_MAX_CYCLES。
+ *
+ * 这样直角角度就是闭环的，不再依赖电量/地面/进弯速度。 */
+#define LINE_FOLLOW_CORNER_FIX_TOLERANCE_DEG         (3.0f)
+#define LINE_FOLLOW_CORNER_FIX_DUTY                  (250.0f)
+#define LINE_FOLLOW_CORNER_FIX_MAX_CYCLES            (300U)
+
+/* ===== 闭环刹车（按实测角速度决定何时停）=====
+ *
+ * 问题：固定 120 ms 的刹车无法同时适配不同的角速度
+ *   → 转得快（电足/地面滑）刹不住，转过头 20~30 度
+ *   → 转得慢（电低/阻力大）刹过头，转不够 90 度
+ * 这就是"大部分过转、少部分欠转"的根源。
+ *
+ * 做法：到 90° 后继续反向刹车，每个周期用陀螺仪 yaw 的变化率算角速度，
+ *       角速度降到 BRAKE_RATE_STOP 以下（车真的不转了）就立即结束。
+ *       至少刹 BRAKE_MIN_CYCLES、最多刹 BRAKE_MAX_CYCLES。
+ *
+ * 调参：
+ *   还过转  → BRAKE_RATE_STOP 20 → 10（要求更"静"才停），或 BRAKE_DUTY 260 → 320
+ *   变欠转  → BRAKE_RATE_STOP 20 → 35
+ *   刹太慢（车停住后还要愣一下）→ BRAKE_MIN_CYCLES 40 → 20 */
+#define LINE_FOLLOW_CORNER_BRAKE_RATE_STOP           (20.0f)  /* 度/秒 */
+#define LINE_FOLLOW_CORNER_BRAKE_MIN_CYCLES          (40U)
+#define LINE_FOLLOW_CORNER_BRAKE_MAX_CYCLES          (400U)
+/* yaw 单次变化超过这个角度才当成一次有效采样（滤掉量化噪声） */
+#define LINE_FOLLOW_CORNER_RATE_MIN_DEG              (0.05f)
+/* 这么久 yaw 都没变化 → 认为角速度为 0 */
+#define LINE_FOLLOW_CORNER_RATE_TIMEOUT_CYCLES       (120U)
+/* 直角完成后的冷却：这段时间不再判直角（防出弯时把"内+外"图案当成新直角） */
+#define LINE_FOLLOW_CORNER_COOLDOWN_CYCLES           (800U)
+/* 出弯软启动：修正量在这么多周期内从 RECOVER_MIN 升到 100% */
+#define LINE_FOLLOW_CORNER_RECOVER_CYCLES            (400U)
+#define LINE_FOLLOW_CORNER_RECOVER_MIN               (0.4f)
+
+/* After a completed right-angle turn, soften ONLY the two-inner pattern.
+ * Driver units: 80 = 8 percentage points of wheel duty difference, not RPM.
+ * Fade the cap toward the normal range over the final 500 ms. */
+#define LINE_FOLLOW_POST_CORNER_GENTLE_MS            (3500U)
+#define LINE_FOLLOW_POST_CORNER_DIFF_MAX             (80.0f)
+#define LINE_FOLLOW_POST_CORNER_FADE_MS              (500U)
+
 
 /* ===== 编码器闭环配平（治"落地后两轮负载不对称 → 跑偏 → 摆头"）=====
  *
@@ -270,7 +377,12 @@
  *   收敛太慢 → KI 0.03 → 0.06
  *   收敛后仍在抖 → KI 降到 0.015，或 LIMIT 80 → 50
  *   两边机械差异特别大 → LIMIT 提到 120 */
-#define ENCODER_BALANCE_ENABLE                       (1)
+/* 【第 1 步验证】编码器配平暂时关闭。
+ * 原因：配平量被无条件加到输出上（命令为 0 时两轮仍得 ±balance），
+ * 而且 DECAY=1.0 等于不泄放，积分会一路顶到 ±120 极限，
+ * 表现为"左轮总比右轮快"+"丢线时仍在转"。
+ * 先关掉它，区分是配平导致还是电机本身差异。 */
+#define ENCODER_BALANCE_ENABLE                       (0)
 #define ENCODER_BALANCE_KI                           (0.05f)
 #define ENCODER_BALANCE_LIMIT                        (120.0f)
 /* 转弯期间冻结（不衰减）：原来 0.98 会把学到的补偿慢慢泄掉，

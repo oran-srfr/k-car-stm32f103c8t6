@@ -18,6 +18,43 @@ static uint32_t display_ms;
 static AppPoint expected_point;
 static bool obstacle_latched;
 static bool departure_sounded;
+static bool obstacle_announced;
+static bool sonar_seen;
+static uint32_t last_sonar_ms;
+static uint8_t close_samples, clear_samples;
+
+static void reset_obstacle(void)
+{
+    obstacle_latched = obstacle_announced = sonar_seen = false;
+    close_samples = clear_samples = 0U;
+}
+
+/* Stop immediately on a close sample; require three independent clear echoes
+ * to resume. Announce only after three consecutive close echoes, once per stop.
+ * Cached samples and invalid readings cannot confirm an obstacle or clear it. */
+static void update_obstacle(const AppInputs *in, bool fresh)
+{
+    if (!fresh) { close_samples = clear_samples = 0U; return; }
+    if (sonar_seen && in->sonar_sample_ms == last_sonar_ms) return;
+    if (sonar_seen && (uint32_t)(in->sonar_sample_ms-last_sonar_ms)>SONAR_MAX_AGE_MS)
+        close_samples = clear_samples = 0U;
+    sonar_seen = true;
+    last_sonar_ms = in->sonar_sample_ms;
+    if (in->distance_mm <= OBSTACLE_STOP_MM) {
+        obstacle_latched = true;
+        clear_samples = 0U;
+        if (close_samples < 3U) ++close_samples;
+    } else if (in->distance_mm > OBSTACLE_CLEAR_MM) {
+        close_samples = 0U;
+        if (clear_samples < 3U) ++clear_samples;
+        if (clear_samples >= 3U) {
+            obstacle_latched = false;
+            obstacle_announced = false;
+        }
+    } else {
+        close_samples = clear_samples = 0U;
+    }
+}
 static bool start_qualifying;
 static uint32_t start_since_ms;
 static uint32_t start_last_poll_ms;
@@ -70,7 +107,8 @@ void App_Init(uint32_t now_ms)
     g_app_selected_mode = APP_MODE_LAPS;
     lap_start_ms = park_start_ms = display_ms = now_ms;
     expected_point = APP_POINT_B;
-    obstacle_latched = departure_sounded = false;
+    reset_obstacle();
+    departure_sounded = false;
     Modules_Init();
     Modules_Drive(APP_DRIVE_STOP);
 }
@@ -86,7 +124,8 @@ static void begin_run(AppMode mode, uint32_t now_ms)
     reset_start(); /* Armed only once per boot or explicit re-arm. */
     lap_start_ms = now_ms;
     expected_point = APP_POINT_B;
-    obstacle_latched = departure_sounded = false;
+    reset_obstacle();
+    departure_sounded = false;
     Modules_RunStarted(mode, now_ms);
 }
 
@@ -156,15 +195,15 @@ void App_Task(uint32_t now_ms)
             begin_run(in.selected_mode, now_ms);
         }
     } else if (active) {
-        if (sonar_fresh && in.distance_mm <= OBSTACLE_STOP_MM && !obstacle_latched) {
-            obstacle_latched = true;
+        update_obstacle(&in, sonar_fresh);
+        if (obstacle_latched && close_samples >= 3U && !obstacle_announced) {
+            obstacle_announced = true;
             increment(&status.obstacles);
             Modules_Sound(APP_SOUND_OBSTACLE);
         }
-        if (sonar_fresh && in.distance_mm > OBSTACLE_CLEAR_MM) { obstacle_latched = false; }
 
         if (status.state == APP_FOLLOW_LINE || status.state == APP_OBSTACLE_HOLD) {
-            if (sonar_fresh && obstacle_latched) {
+            if (obstacle_latched) {
                 status.state = APP_OBSTACLE_HOLD;
             } else {
                 status.state = APP_FOLLOW_LINE;
@@ -184,6 +223,10 @@ void App_Task(uint32_t now_ms)
                 if (in.park_result == APP_PARK_DONE) { status.state = APP_FINISHED; }
             }
         }
+    }
+
+    if (in.run_finished && active && request == APP_CONTROL_NONE && !in.stop_pressed) {
+        status.state = APP_FINISHED;
     }
 
     if (status.state == APP_FINISHED) {

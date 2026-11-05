@@ -3,6 +3,13 @@
 #include <math.h>
 #include <stddef.h>
 
+static float s_dt_seconds = CONTROL_PERIOD_SECONDS;
+
+void PDController_SetElapsedMs(uint32_t ms)
+{
+  s_dt_seconds = (float)(ms ? ms : 1U) / 1000.0f;
+}
+
 static float s_previous_deviation = 0.0f;
 static uint8_t s_has_previous_deviation = 0U;
 static float s_filtered_derivative = 0.0f;
@@ -49,8 +56,11 @@ PDControllerResult_t PDController_Calculate(LineTrackStatus_t status,
   }
   else
   {
-    float derivative = (deviation - s_previous_deviation) / CONTROL_PERIOD_SECONDS;
-    s_filtered_derivative += CONTROL_PD_DERIVATIVE_ALPHA *
+    float derivative = (deviation - s_previous_deviation) / s_dt_seconds;
+    float alpha = s_dt_seconds == CONTROL_PERIOD_SECONDS ? CONTROL_PD_DERIVATIVE_ALPHA :
+                  1.0f - powf(1.0f - CONTROL_PD_DERIVATIVE_ALPHA,
+                              s_dt_seconds / CONTROL_PERIOD_SECONDS);
+    s_filtered_derivative += alpha *
                              (derivative - s_filtered_derivative);
     result.derivative = s_filtered_derivative;
   }

@@ -1,11 +1,13 @@
 #include "main.h"
 #include "app.h"
+#include "app_modules.h"
 
 /* Watch these variables in the debugger. Motor outputs remain unconfigured. */
 volatile uint32_t heartbeat_count = 0U;
 volatile uint32_t uptime_ms = 0U;
 volatile uint32_t system_clock_hz = 0U;
 volatile uint32_t error_code = 0U;
+volatile uint32_t g_reset_cause;
 
 static void SystemClock_Config(void)
 {
@@ -52,6 +54,8 @@ static void SystemClock_Config(void)
 
 int main(void)
 {
+    g_reset_cause = RCC->CSR;
+    __HAL_RCC_CLEAR_RESET_FLAGS();
     if (HAL_Init() != HAL_OK) {
         error_code = 3U;
         Error_Handler();
@@ -74,6 +78,7 @@ int main(void)
 void Error_Handler(void)
 {
     __disable_irq();
+    Modules_EmergencyStop();
     while (1) {
         /* Inspect error_code after pausing the debugger. */
     }

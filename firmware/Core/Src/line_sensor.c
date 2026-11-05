@@ -26,10 +26,11 @@ LineSensorRaw_t LineSensor_ReadRaw(void)
 {
   LineSensorRaw_t raw;
 
-  raw.x1 = (HAL_GPIO_ReadPin(LINE_SENSOR_GPIO_PORT, LINE_SENSOR_X1_PIN) == GPIO_PIN_SET) ? 1U : 0U;
-  raw.x2 = (HAL_GPIO_ReadPin(LINE_SENSOR_GPIO_PORT, LINE_SENSOR_X2_PIN) == GPIO_PIN_SET) ? 1U : 0U;
-  raw.x3 = (HAL_GPIO_ReadPin(LINE_SENSOR_GPIO_PORT, LINE_SENSOR_X3_PIN) == GPIO_PIN_SET) ? 1U : 0U;
-  raw.x4 = (HAL_GPIO_ReadPin(LINE_SENSOR_GPIO_PORT, LINE_SENSOR_X4_PIN) == GPIO_PIN_SET) ? 1U : 0U;
+  uint32_t pins = LINE_SENSOR_GPIO_PORT->IDR;
+  raw.x1 = ((pins & LINE_SENSOR_X1_PIN) != 0U) ? 1U : 0U;
+  raw.x2 = ((pins & LINE_SENSOR_X2_PIN) != 0U) ? 1U : 0U;
+  raw.x3 = ((pins & LINE_SENSOR_X3_PIN) != 0U) ? 1U : 0U;
+  raw.x4 = ((pins & LINE_SENSOR_X4_PIN) != 0U) ? 1U : 0U;
 
   return raw;
 }

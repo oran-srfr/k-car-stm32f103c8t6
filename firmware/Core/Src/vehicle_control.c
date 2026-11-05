@@ -48,8 +48,17 @@ static int16_t VehicleControl_ToDriverCommand(float command)
 }
 
 /* 单轮命令的斜率限制状态（单位：驱动命令/毫秒） */
+static uint32_t s_elapsed_ms = 1U;
 static float s_slew_left = 0.0f;
 static float s_slew_right = 0.0f;
+
+/* ===== 完赛停车状态 =====
+ * 比赛要求跑满两圈后在 A 点过完直角停下，且不能"带着速度滑一段"，
+ * 所以按固定斜率把两轮命令压到 0，压完保持 0（不再接受任何驱动命令）。
+ * 只有 VehicleControl_RequestFinishStop() 被调用后才会生效。 */
+static uint16_t s_finish_ramp_cycles = 0U;   /* 剩余斜坡周期 */
+static uint16_t s_finish_ramp_total = 0U;    /* 斜坡总周期（除数为 0 保护） */
+static uint8_t  s_finish_hold = 0U;          /* 1 = 已停稳，强制输出 0 */
 
 /**
  * 命令斜率限制（slew rate limit）。
@@ -70,13 +79,13 @@ static float VehicleControl_Slew(float current, float target)
 #if CONTROL_SLEW_ENABLE
   float delta = target - current;
 
-  if (delta > CONTROL_SLEW_PER_MS)
+  if (delta > CONTROL_SLEW_PER_MS * (float)s_elapsed_ms)
   {
-    delta = CONTROL_SLEW_PER_MS;
+    delta = CONTROL_SLEW_PER_MS * (float)s_elapsed_ms;
   }
-  else if (delta < -CONTROL_SLEW_PER_MS)
+  else if (delta < -CONTROL_SLEW_PER_MS * (float)s_elapsed_ms)
   {
-    delta = -CONTROL_SLEW_PER_MS;
+    delta = -CONTROL_SLEW_PER_MS * (float)s_elapsed_ms;
   }
   return current + delta;
 #else
@@ -93,6 +102,33 @@ static void VehicleControl_DisableMotor(void)
   s_slew_right = 0.0f;
   g_left_applied_command = 0;
   g_right_applied_command = 0;
+}
+
+/* 请求完赛停车：ramp_ms 毫秒内把两轮命令线性压到 0，之后保持不动。
+ * 只影响输出级，不改循迹算法状态。 */
+void VehicleControl_RequestFinishStop(uint16_t ramp_ms)
+{
+  if (ramp_ms == 0U)
+  {
+    ramp_ms = 1U;
+  }
+  s_finish_ramp_total = ramp_ms;
+  s_finish_ramp_cycles = ramp_ms;
+  s_finish_hold = 0U;
+}
+
+/* 是否已请求完赛停车（含减速中与停稳后） */
+bool VehicleControl_IsFinishStopping(void)
+{
+  return (s_finish_ramp_cycles > 0U) || (s_finish_hold != 0U);
+}
+
+/* 清除完赛停车（重新 Start 时用） */
+void VehicleControl_ClearFinishStop(void)
+{
+  s_finish_ramp_cycles = 0U;
+  s_finish_ramp_total = 0U;
+  s_finish_hold = 0U;
 }
 
 static void VehicleControl_SaveOutput(const LineFollowResult_t *follow,
@@ -112,6 +148,7 @@ void VehicleControl_Init(const PDControllerConfig_t *pd_config,
                          const MotorCommandConfig_t *motor_config,
                          const LineFollowConfig_t *follow_config)
 {
+  VehicleControl_ClearFinishStop();
   s_pd_config = pd_config;
   s_motor_config = motor_config;
   s_follow_config = follow_config;
@@ -152,6 +189,10 @@ void VehicleControl_Stop(void)
 
 void VehicleControl_SetMotorOutputEnabled(bool enabled)
 {
+  if (enabled && !g_motor_output_enabled && g_tracking_started) {
+    /* Start/resume from current sensors, never from parked integral history. */
+    LineFollow_Resume();
+  }
   g_motor_output_enabled = enabled;
 
   /* 关闭门控必须立即生效；打开门控留到下一次Update判断状态。 */
@@ -162,6 +203,11 @@ void VehicleControl_SetMotorOutputEnabled(bool enabled)
 }
 
 void VehicleControl_Update(void)
+{
+  VehicleControl_UpdateElapsed(CONTROL_PERIOD_MS);
+}
+
+void VehicleControl_UpdateElapsed(uint32_t elapsed_ms)
 {
   LineFollowResult_t follow;
   bool output_valid;
@@ -179,6 +225,11 @@ void VehicleControl_Update(void)
     ++g_control_call_count;
     return;
   }
+
+  s_elapsed_ms = elapsed_ms ? elapsed_ms : 1U;
+  LineFollow_SetElapsedMs(s_elapsed_ms);
+  /* Keep sampling for auto-start qualification without advancing a maneuver. */
+  if (!g_motor_output_enabled && g_tracking_started) { LineFollow_Resume(); }
 
   /* 把陀螺仪 yaw 与有效性交给循迹状态机：直角转向用它测量实际转角，
    * 数据无效时自动退回按时间的方式。 */
@@ -231,14 +282,56 @@ void VehicleControl_Update(void)
     float balance = Encoder_GetBalance();
 
     /* 先加配平，再做斜率限制：配平是慢变量（100 ms 窗口积分），
-     * 斜率限制作用于最终的"这一毫秒该给多少"。 */
-    s_slew_left = VehicleControl_Slew(s_slew_left,
-                                      follow.left_command + balance);
-    s_slew_right = VehicleControl_Slew(s_slew_right,
-                                       follow.right_command - balance);
+     * 斜率限制作用于最终的"这一毫秒该给多少"。
+     *
+     * ★ 直角状态【跳过斜率限制】：
+     *   刹车命令是从 +520 直接跳到 −300，斜率限制按 6/ms 要 137 ms 才走完，
+     *   前 87 ms 车还在被正向驱动 —— 这就是"到直角有一股向前的力"。
+     *   直角阶段的命令本来就是突变（刹车/转向/刹车脉冲），需要立即生效。 */
+#if LINE_FOLLOW_CORNER_ENABLE
+    if (follow.state == LINE_FOLLOW_CORNER)
+    {
+      s_slew_left = follow.left_command + balance;
+      s_slew_right = follow.right_command - balance;
+    }
+    else
+#endif
+    {
+      s_slew_left = VehicleControl_Slew(s_slew_left,
+                                        follow.left_command + balance);
+      s_slew_right = VehicleControl_Slew(s_slew_right,
+                                         follow.right_command - balance);
+    }
 
     left_command = VehicleControl_ToDriverCommand(s_slew_left);
     right_command = VehicleControl_ToDriverCommand(s_slew_right);
+  }
+
+  /* ===== 完赛停车：300 ms 线性减速到 0，然后保持不动 =====
+   *
+   * 比赛要求跑满两圈后、在 A 点过完直角时停下。
+   * 直接清零会带着速度滑一段，所以按 ramp 比例把两轮命令压到 0。
+   * 这个门控只在"被请求"时生效，不影响任何正常行驶逻辑。 */
+  if (s_finish_hold != 0U)
+  {
+    left_command = 0;
+    right_command = 0;
+  }
+  else if (s_finish_ramp_cycles > 0U)
+  {
+    float scale = (float)s_finish_ramp_cycles / (float)s_finish_ramp_total;
+
+    left_command = VehicleControl_ToDriverCommand((float)left_command * scale);
+    right_command = VehicleControl_ToDriverCommand((float)right_command * scale);
+    if (s_finish_ramp_cycles > 0U)
+    {
+      s_finish_ramp_cycles = s_elapsed_ms >= s_finish_ramp_cycles ? 0U :
+                             (uint16_t)(s_finish_ramp_cycles - s_elapsed_ms);
+    }
+    if (s_finish_ramp_cycles == 0U)
+    {
+      s_finish_hold = 1U;
+    }
   }
 
   if (g_motor_driver_enabled == 0U)

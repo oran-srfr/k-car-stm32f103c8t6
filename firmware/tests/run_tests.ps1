@@ -45,9 +45,15 @@ try {
     Invoke-Test -Name 'test_tracking' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'tests/test_tracking.c')
     Invoke-Test -Name 'test_line_follow_pd' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_line_follow.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=0', '-DLINE_FOLLOW_TARGET_DEVIATION=0.0f', '-DLINE_FOLLOW_CORNER_ENABLE=0')
     Invoke-Test -Name 'test_discrete_line_follow' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_discrete_line_follow.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=1', '-DLINE_FOLLOW_CORNER_ENABLE=0')
-    Invoke-Test -Name 'test_corner' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_corner.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=0', '-DLINE_FOLLOW_TARGET_DEVIATION=0.0f')
+    Invoke-Test -Name 'test_point_beep' -Sources @('Core/Src/point_beep.c', 'tests/test_point_beep.c') -Extra @('-Itests')
+
+Invoke-Test -Name 'test_corner' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_corner.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=0', '-DLINE_FOLLOW_TARGET_DEVIATION=0.0f')
 
     Invoke-Test -Name 'test_edge_target' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'tests/test_edge_target.c') -Extra @('-Itests', '-DLINE_FOLLOW_DISCRETE_MODE=0')
+
+    Invoke-Test -Name 'test_control_timing' -Sources @('Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'Core/Src/vehicle_control.c', 'tests/test_control_timing.c') -Extra @('-Itests')
+
+    Invoke-Test -Name 'test_obstacle_resume' -Sources @('Core/Src/app.c', 'Core/Src/line_track.c', 'Core/Src/pd_controller.c', 'Core/Src/motor_command.c', 'Core/Src/line_control.c', 'Core/Src/line_follow.c', 'Core/Src/vehicle_control.c', 'tests/test_obstacle_resume.c') -Extra @('-Itests')
 
     if ($script:failed -ne 0) {
         Write-Host "$($script:failed) test executable(s) failed." -ForegroundColor Red

@@ -24,6 +24,7 @@ add_executable(k_car
     Core/Src/motor_command.c
     Core/Src/motor_driver.c
     Core/Src/pd_controller.c
+        Core/Src/point_beep.c
     Core/Src/vehicle_control.c
     Core/Src/zk.c
     Core/Src/ultrasonic.c

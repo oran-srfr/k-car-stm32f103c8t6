@@ -58,6 +58,12 @@ void LineFollow_Init(void);
 
 /** 清除故障和历史，从下一控制周期开始循迹。 */
 void LineFollow_Start(void);
+/* Clear control accumulators; retain the last line side and exit window.
+ * If still off-line on resumption, permit a bounded, gentle reacquisition. */
+void LineFollow_Resume(void);
+
+/* Elapsed wall time for the next update; legacy callers default to 1 ms. */
+void LineFollow_SetElapsedMs(uint32_t elapsed_ms);
 
 /** 立即进入停止状态，软件左右目标命令保持为 0。 */
 void LineFollow_Stop(void);
@@ -73,5 +79,12 @@ LineFollowResult_t LineFollow_Update(const PDControllerConfig_t *pd_config,
 
 /** 返回最近一次周期更新结果；不会重新读取传感器或执行计算。 */
 LineFollowResult_t LineFollow_GetOutput(void);
+
+/** 直角只读诊断（不参与任何控制判断，可随时调用）：
+ *  last_deg  最近一次"决定停止转向"时的实际转角（度）
+ *  reason    0 = 陀螺仪到角；1 = 陀螺仪失效改按时间；2 = 绝对上限放弃
+ *  episodes  直角触发累计次数（同一个拐角若 +2，说明退出后又被重新触发） */
+void LineFollow_GetCornerDiag(float *last_deg, uint8_t *reason,
+                              uint16_t *episodes);
 
 #endif /* LINE_FOLLOW_H */

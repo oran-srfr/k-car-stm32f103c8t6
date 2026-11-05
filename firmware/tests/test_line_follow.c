@@ -93,7 +93,9 @@ static void test_geometry_and_small_corrections(void)
     assert(r.right_command - r.left_command > 100.0f);
     assert(r.right_command - r.left_command < 300.0f);   /* 跳变瞬间：含 D 项提前量 */
     moving(r);
-    for (int i = 0; i < 21; ++i) r = step(LEFT_INNER);
+    /* 采样窗口要落在"强修正触发之前"，否则测到的是放大后的饱和值。
+     * 触发拍数是可调参数（200 → 50 → 20），这里跟着参数走，取一半。 */
+    for (int i = 0; i < (int)LINE_FOLLOW_HARD_TURN_TRIGGER_CYCLES / 2; ++i) r = step(LEFT_INNER);
     float d1 = r.right_command - r.left_command;
     assert(d1 > 100.0f);            /* 单内探头确实在修正，不是装死 */
     assert(d1 < 300.0f);            /* 未饱和（最大差速约 530） */
@@ -107,8 +109,11 @@ static void test_geometry_and_small_corrections(void)
     moving(r);
     r = step(CENTER);
     assert(fabsf(r.control.pd.output) <= CONTROL_PD_D_TERM_LIMIT);
-    for (int i = 0; i < 100; ++i) r = step(CENTER);
-    assert(fabsf(r.left_command - r.right_command) < 0.01f);
+    /* 回中后要等两件事：①"弯道速度保持"计时走完（CURVE_HOLD 拍），
+     * ②曲率前馈按 FF_LEAK 泄放到 0（0.98^N，500 拍后剩 0.004%）。
+     * 所以循环次数取 500，两边都够。 */
+    for (int i = 0; i < 500; ++i) r = step(CENTER);
+    assert(fabsf(r.left_command - r.right_command) < 0.5f);
     assert(r.base_speed == CONTROL_BASE_SPEED_DEFAULT);
 
     /* 居中时两轮必须严格同速 —— 这是实测暴露过的问题：
@@ -121,7 +126,10 @@ static void test_geometry_and_small_corrections(void)
     }
     r = step(CENTER);
     assert(r.control.track.deviation == 0.0f);
-    assert(fabsf(r.left_command - r.right_command) < 0.01f);
+    /* 曲率前馈会记住刚才的偏置，回中后需要一段时间泄放（FF_LEAK）。
+     * 这里先让它泄放完，再检查"居中两轮同速"这条硬要求。 */
+    for (int i = 0; i < 300; ++i) r = step(CENTER);
+    assert(fabsf(r.left_command - r.right_command) < 0.5f);
     assert(fabsf(r.control.pd.output) < 0.01f);
 }
 

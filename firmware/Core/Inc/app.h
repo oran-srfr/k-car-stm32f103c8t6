@@ -26,6 +26,7 @@ extern volatile AppMode g_app_selected_mode;
 
 /* Produced once per foreground iteration. Events must be consumed once, not levels. */
 typedef struct {
+    bool run_finished; /* Verified finish from the board motion adapter. */
     bool start_pressed; /* Reserved for a future HMI; automatic start needs no press. */
     bool stop_pressed;
     AppMode selected_mode;

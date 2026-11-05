@@ -29,5 +29,6 @@ PDControllerResult_t PDController_Calculate(LineTrackStatus_t status,
 
 /** 清除上一次偏差，保证下一次正常计算从零微分开始。 */
 void PDController_Reset(void);
+void PDController_SetElapsedMs(uint32_t elapsed_ms);
 
 #endif /* PD_CONTROLLER_H */
